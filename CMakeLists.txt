@@ -57,8 +57,9 @@ set(SOURCES
 
 add_executable(demo_gui ${SOURCES})
 
-# Include directories for ImGui
+# Include directories for ImGui and our Headers
 target_include_directories(demo_gui PRIVATE 
+    include
     ${IMGUI_DIR} 
     ${IMGUI_DIR}/backends
 )
