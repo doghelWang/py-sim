@@ -75,17 +75,52 @@ std::vector<float> get_random_data(int count) {
   return data;
 }
 
+// --- Graphics API ---
+
+void draw_rect(float x, float y, float w, float h, int r, int g, int b) {
+  std::lock_guard<std::mutex> lock(g_app.mtx);
+  // Convert to uint 0xAABBGGRR (ImGui logic)
+  unsigned int col = (255 << 24) | (b << 16) | (g << 8) | r;
+  g_app.draw_queue.push_back({CmdType::RECT, x, y, w, h, 0, col});
+}
+
+void draw_circle(float x, float y, float radius, int r, int g, int b) {
+  std::lock_guard<std::mutex> lock(g_app.mtx);
+  unsigned int col = (255 << 24) | (b << 16) | (g << 8) | r;
+  g_app.draw_queue.push_back({CmdType::CIRCLE, x, y, 0, 0, radius, col});
+}
+
+void clear_screen() {
+  std::lock_guard<std::mutex> lock(g_app.mtx);
+  g_app.draw_queue.clear();
+}
+
+bool is_key_down(const std::string &key) {
+  std::lock_guard<std::mutex> lock(g_app.mtx);
+  if (g_app.input_sticky.count(key)) {
+    bool pressed = g_app.input_sticky[key];
+    g_app.input_sticky[key] = false; // Consume the event
+    return pressed;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------
 // Module Definition
 // ---------------------------------------------------------
 PYBIND11_EMBEDDED_MODULE(host_api, m) {
   m.doc() = "Extended Host API";
 
-  m.def("log_message", &log_message, "Log a message to the host console");
-  m.def("sleep_ms", &sleep_ms, "Sleep for specified milliseconds");
-  m.def("compute_prime", &compute_prime,
-        "Find the Nth prime number (CPU intensive)");
-  m.def("write_file", &write_file, "Write string content to a file");
-  m.def("read_file", &read_file, "Read string content from a file");
-  m.def("get_random_data", &get_random_data, "Get a list of random floats");
+  m.def("log_message", &log_message);
+  m.def("sleep_ms", &sleep_ms);
+  m.def("compute_prime", &compute_prime);
+  m.def("write_file", &write_file);
+  m.def("read_file", &read_file);
+  m.def("get_random_data", &get_random_data);
+
+  // Graphics
+  m.def("draw_rect", &draw_rect);
+  m.def("draw_circle", &draw_circle);
+  m.def("clear_screen", &clear_screen);
+  m.def("is_key_down", &is_key_down);
 }

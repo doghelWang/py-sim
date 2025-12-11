@@ -8,6 +8,14 @@
 #include <string>
 #include <vector>
 
+enum class CmdType { RECT, CIRCLE, CLEAR };
+
+struct DrawCmd {
+  CmdType type;
+  float x, y, w, h, r;
+  unsigned int color; // 0xAABBGGRR
+};
+
 struct AppState {
   std::mutex mtx;
   std::condition_variable cv;
@@ -18,8 +26,13 @@ struct AppState {
   std::atomic<bool> should_terminate{false};
 
   // Script Data
-  char script_path[1024] = "../scripts/complex_test.py";
+  char script_path[1024] = "../scripts/snake_game.py";
   std::vector<std::string> source_lines;
+
+  // Graphics & Input
+  std::vector<DrawCmd> draw_queue;
+  std::map<std::string, bool>
+      input_sticky; // Latched key presses ("up", "down")
 
   // Execution State (Updated by Worker)
   std::string current_file;
