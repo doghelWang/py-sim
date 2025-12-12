@@ -49,7 +49,25 @@ py::object trace_func(py::object frame, std::string event, py::object arg) {
 // ---------------------------------------------------------
 
 void PythonEngine::StartWorker() {
+  if (g_app.is_running) {
+    {
+      std::lock_guard<std::mutex> lock(g_app.mtx);
+      g_app.should_terminate = true;
+      g_app.is_paused = false;
+      g_app.cv.notify_all();
+    }
+  }
   JoinWorker(); // Ensure previous is cleaned
+
+  // Clean log if too big
+  {
+    std::lock_guard<std::mutex> lock(g_app.mtx);
+    if (g_app.console_log.size() > 5000)
+      g_app.console_log =
+          g_app.console_log.substr(g_app.console_log.size() - 4000);
+    g_app.should_terminate = false;
+  }
+
   worker_thread = std::thread(WorkerEntry);
 }
 

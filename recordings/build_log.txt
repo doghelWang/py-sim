@@ -1,0 +1,2 @@
+[ 57%] Built target glfw
+[100%] Built target demo_gui
