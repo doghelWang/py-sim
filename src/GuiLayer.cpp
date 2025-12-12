@@ -3,6 +3,7 @@
 #include "PythonEngine.hpp"
 #include "imgui.h"
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
@@ -14,12 +15,51 @@ const std::vector<std::string> keywords = {
     "def ", "class ", "import ", "from ", "if ",     "else:", "elif ",
     "for ", "while ", "return",  "try:",  "except:", "print"};
 
+struct ApiDoc {
+  std::string name;
+  std::string signature;
+  std::string description;
+  std::string example;
+};
+
+const std::vector<ApiDoc> api_docs = {
+    {"log_message", "log_message(msg: str)",
+     "Prints a message to the System Log.", "host_api.log_message('Hello')"},
+    {"sleep_ms", "sleep_ms(ms: int)", "Pauses execution for N milliseconds.",
+     "host_api.sleep_ms(100)"},
+    {"draw_rect", "draw_rect(x, y, w, h, r, g, b)",
+     "Draws a colored rectangle.",
+     "host_api.draw_rect(10, 10, 50, 50, 255, 0, 0)"},
+    {"draw_circle", "draw_circle(x, y, radius, r, g, b)",
+     "Draws a colored circle.",
+     "host_api.draw_circle(100, 100, 20, 0, 255, 0)"},
+    {"draw_text", "draw_text(x, y, text, r, g, b)", "Draws text at position.",
+     "host_api.draw_text(10, 10, 'Score: 0', 255, 255, 255)"},
+    {"clear_screen", "clear_screen()", "Clears the game canvas.",
+     "host_api.clear_screen()"},
+    {"is_key_down", "is_key_down(key: str) -> bool",
+     "Checks if key (up, down, left, right, w, a, s, d) was pressed.",
+     "if host_api.is_key_down('up'): ..."},
+    {"get_mouse_pos", "get_mouse_pos() -> (x, y)",
+     "Returns mouse position relative to canvas.",
+     "mx, my = host_api.get_mouse_pos()"},
+    {"is_mouse_down", "is_mouse_down(btn: int) -> bool",
+     "Checks mouse button (0=Left, 1=Right).",
+     "if host_api.is_mouse_down(0): ..."},
+    {"compute_prime", "compute_prime(n: int) -> int",
+     "Calculates Nth prime number (CPU intensive).",
+     "p = host_api.compute_prime(100)"},
+    {"write_file", "write_file(path, content)", "Writes string to file.",
+     "host_api.write_file('log.txt', 'data')"},
+    {"read_file", "read_file(path) -> str", "Reads file content.",
+     "data = host_api.read_file('config.txt')"},
+    {"get_random_data", "get_random_data(count) -> [float]",
+     "Returns list of random floats.", "data = host_api.get_random_data(10)"}};
+
 void GuiLayer::SetupStyle() {
   ImGuiStyle &style = ImGui::GetStyle();
   style.WindowRounding = 5.0f;
   style.FrameRounding = 4.0f;
-  // ... (rest of style setup is fine, omitted for brevity if unchanged, but for
-  // overwrite I must include all)
   style.PopupRounding = 4.0f;
   style.ScrollbarRounding = 12.0f;
   style.GrabRounding = 4.0f;
@@ -42,6 +82,23 @@ void LoadScriptContent() {
     g_app.source_lines.push_back(line);
 }
 
+// Scans ../scripts/ directory
+std::vector<std::string> ScanScripts() {
+  std::vector<std::string> files;
+  std::string path = "../scripts";
+  try {
+    if (std::filesystem::exists(path)) {
+      for (const auto &entry : std::filesystem::directory_iterator(path)) {
+        if (entry.path().extension() == ".py") {
+          files.push_back(entry.path().string());
+        }
+      }
+    }
+  } catch (...) {
+  }
+  return files;
+}
+
 void DrawCanvas() {
   ImGui::Text("GAME OUTPUT");
   ImGui::BeginChild("GameCanvas", ImVec2(0, 0), true);
@@ -52,6 +109,17 @@ void DrawCanvas() {
   ImVec2 size = ImGui::GetContentRegionAvail();
   draw_list->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y),
                            IM_COL32(50, 50, 50, 255));
+
+  // Capture Mouse
+  ImGuiIO &io = ImGui::GetIO();
+  {
+    std::lock_guard<std::mutex> lock(g_app.mtx);
+    g_app.mouse_x = io.MousePos.x - p.x;
+    g_app.mouse_y = io.MousePos.y - p.y;
+    g_app.mouse_down[0] = io.MouseDown[0];
+    g_app.mouse_down[1] = io.MouseDown[1];
+    g_app.mouse_down[2] = io.MouseDown[2];
+  }
 
   {
     std::lock_guard<std::mutex> lock(g_app.mtx);
@@ -64,6 +132,8 @@ void DrawCanvas() {
                                  cmd.color);
       } else if (cmd.type == CmdType::CIRCLE) {
         draw_list->AddCircleFilled(ImVec2(x, y), cmd.r, cmd.color);
+      } else if (cmd.type == CmdType::TEXT) {
+        draw_list->AddText(ImVec2(x, y), cmd.color, cmd.text.c_str());
       }
     }
   }
@@ -71,7 +141,6 @@ void DrawCanvas() {
 }
 
 void CaptureInput() {
-  // Sticky Input: Set true if key pressed, consumer must clear it.
   std::lock_guard<std::mutex> lock(g_app.mtx);
   if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_W))
     g_app.input_sticky["up"] = true;
@@ -84,12 +153,14 @@ void CaptureInput() {
   if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) ||
       ImGui::IsKeyPressed(ImGuiKey_D))
     g_app.input_sticky["right"] = true;
-  // Debounce/Limiting is handled by the consumer clearing flags
 }
 
 void GuiLayer::Render(void *window_ptr) {
   ImGuiIO &io = ImGui::GetIO();
   CaptureInput();
+
+  static std::vector<std::string> script_list = ScanScripts();
+  static int selected_script_idx = -1;
 
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(io.DisplaySize);
@@ -99,20 +170,34 @@ void GuiLayer::Render(void *window_ptr) {
 
   // Top Bar
   ImGui::BeginChild("TopBar", ImVec2(0, 60), true);
-  { // Block for scope
+  {
     ImGui::TextDisabled("CONTROLS");
     ImGui::SameLine();
 
-    static char script_buf[1024];
-    if (script_buf[0] == 0)
-      strncpy(script_buf, g_app.script_path, 1024);
-    ImGui::PushItemWidth(300);
-    if (ImGui::InputText("##Path", script_buf, 1024))
-      strncpy(g_app.script_path, script_buf, 1024);
+    ImGui::PushItemWidth(200);
+    const char *preview =
+        (selected_script_idx >= 0 && selected_script_idx < script_list.size())
+            ? script_list[selected_script_idx].c_str()
+            : "Select Script...";
+
+    if (ImGui::BeginCombo("##Scripts", preview)) {
+      for (int n = 0; n < script_list.size(); n++) {
+        const bool is_selected = (selected_script_idx == n);
+        if (ImGui::Selectable(script_list[n].c_str(), is_selected)) {
+          selected_script_idx = n;
+          strncpy(g_app.script_path, script_list[n].c_str(), 1024);
+          LoadScriptContent();
+        }
+        if (is_selected)
+          ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
     ImGui::PopItemWidth();
     ImGui::SameLine();
-    if (ImGui::Button("LOAD"))
-      LoadScriptContent();
+    if (ImGui::Button("REFRESH"))
+      script_list = ScanScripts();
+
     ImGui::SameLine();
 
     if (!g_app.is_running) {
@@ -146,21 +231,58 @@ void GuiLayer::Render(void *window_ptr) {
   }
   ImGui::EndChild();
 
-  // Layout Logic
-  float bottom_height = 200.0f; // Height for Logs
-  float main_area_height =
-      io.DisplaySize.y - 60 - bottom_height; // TopBar (60) + Bottom
+  float bottom_height = 200.0f;
+  float main_area_height = io.DisplaySize.y - 60 - bottom_height;
 
   ImGui::Columns(2, "MainColumns");
   if (g_app.is_running)
     ImGui::SetColumnWidth(0, io.DisplaySize.x * 0.60f);
 
-  // Left Column
+  // Left Column: Split API List and Source
   ImGui::BeginChild("LeftCol", ImVec2(0, main_area_height), false);
 
-  // Source View (Top Half of Left)
   ImGui::Text("SOURCE EXPLORER");
-  ImGui::BeginChild("SourceView", ImVec2(0, main_area_height * 0.5f), true);
+  // Split Source Explorer into API List (25%) and Source (75%)
+  ImGui::BeginChild("SourceContainer", ImVec2(0, main_area_height * 0.5f),
+                    true);
+
+  ImGui::Columns(2, "SourceSplit");
+  ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.25f);
+
+  // 1. API List
+  ImGui::TextDisabled("API LIST");
+  ImGui::BeginChild("ApiList", ImVec2(0, 0), false);
+  for (const auto &doc : api_docs) {
+    if (ImGui::Selectable(doc.name.c_str())) {
+      ImGui::OpenPopup("ApiPopup");
+    }
+
+    // Hover Tooltip (Fall back if click doesn't work well)
+    if (ImGui::IsItemHovered()) {
+      ImGui::BeginTooltip();
+      ImGui::TextColored(ImVec4(1, 1, 0, 1), "%s", doc.signature.c_str());
+      ImGui::Text("%s", doc.description.c_str());
+      ImGui::EndTooltip();
+    }
+
+    // Click Popup (Persistent Bubble)
+    if (ImGui::BeginPopupContextItem()) { // Right click also works
+      ImGui::TextColored(ImVec4(1, 1, 0, 1), "%s", doc.signature.c_str());
+      ImGui::Separator();
+      ImGui::TextWrapped("%s", doc.description.c_str());
+      ImGui::Separator();
+      ImGui::TextColored(ImVec4(0, 1, 0, 1), "Example:");
+      ImGui::TextWrapped("%s", doc.example.c_str());
+      ImGui::EndPopup();
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::NextColumn();
+
+  // 2. Source Code
+  ImGui::TextDisabled("CODE VIEW");
+  ImGui::BeginChild("CodeView", ImVec2(0, 0), false);
   {
     std::lock_guard<std::mutex> lock(g_app.mtx);
     if (g_app.source_lines.empty()) {
@@ -212,19 +334,18 @@ void GuiLayer::Render(void *window_ptr) {
       }
     }
   }
-  ImGui::EndChild();
+  ImGui::EndChild(); // CodeView
 
-  // Game Canvas (Bottom Half of Left)
-  DrawCanvas(); // This uses "GameCanvas" child, which will fit in remaining
-                // space of LeftCol?
-  // Wait, DrawCanvas uses BeginChild(0,0). If we are in LeftCol, it takes
-  // remaining space of LeftCol. Correct.
+  ImGui::Columns(1); // End SourceSplit
+  ImGui::EndChild(); // End SourceContainer
+
+  DrawCanvas();
 
   ImGui::EndChild(); // End LeftCol
 
   ImGui::NextColumn();
 
-  // Right Column: Variables
+  // Right Column
   ImGui::Text("DATA INSPECTOR");
   ImGui::BeginChild("VarsView", ImVec2(0, main_area_height), true);
   {
@@ -240,8 +361,8 @@ void GuiLayer::Render(void *window_ptr) {
           ImGui::TableNextRow();
           ImGui::TableNextColumn();
           ImGui::Text("%s", key.c_str());
-          ImGui::TableNextColumn();              // Value
-          ImGui::TextWrapped("%s", val.c_str()); // Wrap long values
+          ImGui::TableNextColumn();
+          ImGui::TextWrapped("%s", val.c_str());
         }
         ImGui::EndTable();
       }
@@ -254,8 +375,7 @@ void GuiLayer::Render(void *window_ptr) {
 
   // Bottom Log Area
   ImGui::Text("SYSTEM LOG");
-  ImGui::BeginChild("LogView", ImVec2(0, 0),
-                    true); // Takes remaining space (at bottom)
+  ImGui::BeginChild("LogView", ImVec2(0, 0), true);
   {
     std::lock_guard<std::mutex> lock(g_app.mtx);
     ImGui::TextUnformatted(g_app.console_log.c_str());

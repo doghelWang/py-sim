@@ -8,12 +8,13 @@
 #include <string>
 #include <vector>
 
-enum class CmdType { RECT, CIRCLE, CLEAR };
+enum class CmdType { RECT, CIRCLE, TEXT, CLEAR };
 
 struct DrawCmd {
   CmdType type;
   float x, y, w, h, r;
   unsigned int color; // 0xAABBGGRR
+  std::string text;   // For TEXT commands
 };
 
 struct AppState {
@@ -33,6 +34,8 @@ struct AppState {
   std::vector<DrawCmd> draw_queue;
   std::map<std::string, bool>
       input_sticky; // Latched key presses ("up", "down")
+  float mouse_x = 0, mouse_y = 0;
+  bool mouse_down[3] = {false, false, false}; // Left, Right, Middle
 
   // Execution State (Updated by Worker)
   std::string current_file;
