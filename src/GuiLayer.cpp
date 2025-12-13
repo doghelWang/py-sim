@@ -457,7 +457,7 @@ void DrawRPiVisualizer() {
       ImVec2(comp_estop_pos.x + 20, comp_estop_pos.y + 30));
 
   // Dynamic Pin Mapping for ESTOP
-  int estop_pin = Model().GetPinForAction(amr::AppModel::InputAction::ESTOP);
+  int estop_pin = Model().GetPinForAction(amr::InputAction::ESTOP);
   bool estop_active = (estop_pin != -1) && Model().GetDI(estop_pin);
 
   // Custom button style for E-Stop (Red mushroom)
@@ -495,7 +495,7 @@ void DrawRPiVisualizer() {
   ImGui::SetCursorScreenPos(ImVec2(comp_home_pos.x + 10, comp_home_pos.y + 10));
 
   // Dynamic Pin Mapping for HOME
-  int home_pin = Model().GetPinForAction(amr::AppModel::InputAction::HOME_ALL);
+  int home_pin = Model().GetPinForAction(amr::InputAction::HOME_ALL);
   bool home_state = (home_pin != -1) && Model().GetDI(home_pin);
 
   if (ImGui::Button("HOME", ImVec2(60, 40))) {
@@ -862,11 +862,40 @@ void DrawEditorAndConfig() {
         ImGui::Text("LOG");
         ImGui::SameLine();
         char buf[64];
-        strncpy(buf, b.str_param.c_str(), 64);
-        ImGui::PushItemWidth(120);
-        if (ImGui::InputText("##MSG", buf, 64))
+        strncpy(buf, b.str_param.c_str(), 63);
+        ImGui::PushItemWidth(200);
+        if (ImGui::InputText("msg", buf, 64))
           b.str_param = buf;
         ImGui::PopItemWidth();
+      } else if (b.type == amr::BlockType::CONFIG_SAFETY) {
+        ImGui::Text("SAFETY CFG");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(80);
+        int pin = (int)b.param1;
+        if (ImGui::InputInt("Pin", &pin))
+          b.param1 = (float)pin;
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        ImGui::Text("->");
+        ImGui::SameLine();
+        ImGui::PushItemWidth(100);
+        int action = (int)b.param2;
+        const char *actions[] = {"NONE", "ESTOP", "PAUSE", "HOME"};
+        if (ImGui::Combo("Action", &action, actions, IM_ARRAYSIZE(actions)))
+          b.param2 = (float)action;
+        ImGui::PopItemWidth();
+
+        ImGui::SameLine();
+        bool invert = (bool)b.param3;
+        if (ImGui::Checkbox("Inv", &invert))
+          b.param3 = (float)invert;
+
+        bool edge = (b.str_param == "EDGE");
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Edge", &edge))
+          b.str_param = edge ? "EDGE" : "";
+
       } else if (b.type == amr::BlockType::HOME_AXIS) {
         ImGui::Text("HOME MECH");
         ImGui::SameLine();
@@ -1290,14 +1319,23 @@ void DrawCodeViewer() {
 // ---------------------------------------------------------
 void DrawLogViewer() {
   ImGui::Text("System Log");
-  ImGui::BeginChild("LogRegion", ImVec2(0, 0), true);
-  {
-    std::string log = Model().GetLog();
-    ImGui::TextWrapped("%s", log.c_str());
-    if (log.size() > 0)
-      ImGui::SetScrollHereY(1.0f);
-  }
-  ImGui::EndChild();
+
+  // Use a child region or just let InputText fill?
+  // InputTextMultiline with size (-FLT_MIN, -FLT_MIN) fills available space.
+  // Note: GetLog returns a copy, so we have a local mutable buffer
+  // (effectively). We use the string's internal buffer directly.
+
+  std::string log = Model().GetLog();
+
+  // Hack: InputText expects a mutable char* even for ReadOnly.
+  // We cast away constness because we know ReadOnly won't modify it.
+  // Also pass log.size()+1 as buffer size to include null terminator.
+  ImGui::InputTextMultiline("##LogRegion", const_cast<char *>(log.c_str()),
+                            log.size() + 1, ImVec2(-FLT_MIN, -FLT_MIN),
+                            ImGuiInputTextFlags_ReadOnly);
+
+  // Previous auto-scroll logic was: passed loop -> SetScrollHereY.
+  // InputTextMultiline manages its own scroll state.
 }
 
 void DrawTopBar() {

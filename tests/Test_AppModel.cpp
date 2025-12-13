@@ -30,7 +30,7 @@ TEST(AppModelTest, AxisMovement) {
   EXPECT_TRUE(app.IsAxisMoving(0));
 
   // Physics Update (1 sec at 10 u/s -> +10)
-  app.UpdatePhysics(1.0f);
+  app.UpdateSafetyLogic(1.0f);
   EXPECT_FALSE(app.IsPaused()); // Ensure not paused
 
   // Position should be 10.0
@@ -39,12 +39,12 @@ TEST(AppModelTest, AxisMovement) {
 
   // Physics Update (9 more secs -> 90 + 10 = 100)
   for (int i = 0; i < 9; ++i)
-    app.UpdatePhysics(1.0f);
+    app.UpdateSafetyLogic(1.0f);
 
   EXPECT_NEAR(app.GetAxisPos(0), 100.0f, 0.001f);
 
   // Should be stopped
-  app.UpdatePhysics(0.1f); // Final check
+  app.UpdateSafetyLogic(0.1f); // Final check
   EXPECT_FALSE(app.IsAxisMoving(0));
 }
 
@@ -59,11 +59,11 @@ TEST(AppModelTest, PausePreventsMotion) {
   EXPECT_TRUE(app.IsPaused());
 
   // Physics should NOT update
-  app.UpdatePhysics(1.0f);
+  app.UpdateSafetyLogic(1.0f);
   EXPECT_FLOAT_EQ(app.GetAxisPos(0), 0.0f);
 
   app.SetPaused(false);
-  app.UpdatePhysics(1.0f);
+  app.UpdateSafetyLogic(1.0f);
   EXPECT_NEAR(app.GetAxisPos(0), 10.0f, 0.001f);
 }
 
@@ -86,7 +86,7 @@ TEST(AppModelTest, SafetyStop) {
   ResetApp(app);
 
   // Map DI-6 to ESTOP
-  app.MapInput(6, amr::AppModel::InputAction::ESTOP, false, false);
+  app.MapInput(6, amr::InputAction::ESTOP, false, false);
 
   // Simulate High Signal
   app.SetDI(6, true);
@@ -117,11 +117,11 @@ TEST(AppModelTest, SafetyConfigTest) {
   ResetApp(app);
 
   // Map DI-6 to ESTOP (High Active, Level Trigger)
-  app.MapInput(6, amr::AppModel::InputAction::ESTOP, false, false);
+  app.MapInput(6, amr::InputAction::ESTOP, false, false);
 
   // Start Axis Moving
   app.AxisMove(0, 100.0f, 10.0f);
-  app.UpdatePhysics(0.1f); // Move a bit
+  app.UpdateSafetyLogic(0.1f); // Move a bit
   EXPECT_TRUE(app.IsAxisMoving(0));
   EXPECT_FALSE(app.IsPaused());
 
@@ -134,7 +134,7 @@ TEST(AppModelTest, SafetyConfigTest) {
 
   // Motion should stop (Motion Freeze due to Pause)
   float pos_before = app.GetAxisPos(0);
-  app.UpdatePhysics(1.0f);
+  app.UpdateSafetyLogic(1.0f);
   float pos_after = app.GetAxisPos(0);
   EXPECT_FLOAT_EQ(pos_before, pos_after);
 
@@ -150,6 +150,6 @@ TEST(AppModelTest, SafetyConfigTest) {
   EXPECT_FALSE(app.IsPaused());
 
   // Motion Resumes
-  app.UpdatePhysics(1.0f);
+  app.UpdateSafetyLogic(1.0f);
   EXPECT_GT(app.GetAxisPos(0), pos_after);
 }

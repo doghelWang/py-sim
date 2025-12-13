@@ -1,4 +1,6 @@
 #include "amr/AppModel.hpp"
+#include "amr/AmrController.hpp"
+#include "amr/SimulatorCore.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -13,137 +15,38 @@ AppModel &AppModel::Instance() {
 
 AppModel::AppModel() {
   // Initialize defaults if needed
-  last_di_state_.resize(8, false); // Assuming 8 DI pins
+  last_di_state_.resize(8, false); // Keep for minimal usage or remove?
+  // Let's rely on AmrController for logic.
 
-  // Default Hardware
-  hardware_ = std::make_unique<SimHardware>();
+  // Set Logging Callback for Controller
+  AmrController::Instance().SetLogCallback(
+      [this](const std::string &msg) { LogMessage(msg); });
 }
 
 // --- Safety & Input ---
 
 void AppModel::MapInput(int pin, InputAction action, bool invert,
                         bool edge_trigger) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  InputConfig cfg;
-  cfg.action = action;
-  cfg.invert = invert;
-  cfg.edge_trigger = edge_trigger;
-  input_map_[pin] = cfg;
+  // Delegate to AmrController
+  AmrController::Instance().ConfigureSafety(pin, static_cast<int>(action),
+                                            invert, edge_trigger);
 }
 
-void AppModel::ResetSafetyConfig() {
-  std::lock_guard<std::mutex> lock(mtx_);
-  input_map_.clear();
-  estop_active_ = false;
-  // Note: We do NOT unpause automatically. Safety resets don't imply
-  // safe-to-move.
-  console_log_ += "[Sys] Safety Config Reset.\n";
-}
+void AppModel::ResetSafetyConfig() { AmrController::Instance().ResetSafety(); }
 
 int AppModel::GetPinForAction(InputAction action) const {
-  std::lock_guard<std::mutex> lock(mtx_);
-  for (const auto &pair : input_map_) {
-    if (pair.second.action == action) {
-      return pair.first; // Return Pin ID
-    }
-  }
-  return -1; // Not found
+  return AmrController::Instance().GetPinForAction(action);
 }
 
 void AppModel::UpdateSafetyLogic(float dt) {
-  std::lock_guard<std::mutex> lock(mtx_);
+  // Delegate
+  AmrController::Instance().Update(dt);
 
-  // Check each mapped input
-  for (auto &pair : input_map_) {
-    int pin = pair.first;
-    const auto &cfg = pair.second;
-
-    if (pin < 0 || pin >= 8)
-      continue;
-
-    // Get current raw state
-    // Get current raw state from Hardware
-    bool raw_val = hardware_->GetDI(pin);
-    // Apply inversion
-    bool active = cfg.invert ? !raw_val : raw_val;
-
-    // Edge Detection
-    bool was_active = last_di_state_[pin];
-    bool rising_edge = active && !was_active;
-    bool falling_edge = !active && was_active;
-
-    // Update history
-    last_di_state_[pin] = active;
-
-    // Process Actions
-    switch (cfg.action) {
-    case InputAction::ESTOP:
-      // Level Triggered usually for E-Stop (Active = Stop)
-      if (active) {
-        if (!estop_active_) {
-          estop_active_ = true;
-          is_paused_ = true;
-          console_log_ += "[Safety] E-STOP TRIGGERED! System Paused.\n";
-          std::cout << "[Safety] E-STOP TRIGGERED! System Paused." << std::endl;
-        } else {
-          // Enforce pause if someone tried to unpause while Estop is held
-          if (!is_paused_) {
-            is_paused_ = true;
-            console_log_ += "[Safety] E-STOP ACTIVE. Cannot Resume.\n";
-            std::cout << "[Safety] E-STOP ACTIVE. Cannot Resume." << std::endl;
-          }
-        }
-      } else {
-        if (estop_active_) {
-          estop_active_ = false;
-          console_log_ += "[Safety] E-Stop Released. Please Resume manually.\n";
-          std::cout << "[Safety] E-Stop Released. Please Resume manually."
-                    << std::endl;
-        }
-      }
-      break;
-
-    case InputAction::PAUSE_TOGGLE:
-      if (rising_edge) {
-        if (estop_active_) {
-          console_log_ += "[Safety] Ignored Pause Toggle (E-Stop Active).\n";
-          std::cout << "[Safety] Ignored Pause Toggle (E-Stop Active)."
-                    << std::endl;
-        } else {
-          bool new_pause = !is_paused_;
-          is_paused_ = new_pause;
-          cv_.notify_all();
-          std::string msg = (new_pause ? "[Safety] Pause Toggled -> PAUSED\n"
-                                       : "[Safety] Pause Toggled -> RESUMED\n");
-          console_log_ += msg;
-          std::cout << msg;
-        }
-      }
-      break;
-
-    case InputAction::HOME_ALL:
-      if (rising_edge) {
-        if (is_paused_ || estop_active_) {
-          console_log_ +=
-              "[Safety] Ignored Home All (System Paused/Stopped).\n";
-          std::cout << "[Safety] Ignored Home All (System Paused/Stopped)."
-                    << std::endl;
-        } else {
-          console_log_ += "[Safety] Home All Triggered.\n";
-          std::cout << "[Safety] Home All Triggered." << std::endl;
-          // Trigger Homing for all axes (Mock implementation)
-          for (int i = 0; i < 3; ++i) {
-            // Set target to 0, slow velocity
-            // Set target to 0, slow velocity via Hardware
-            hardware_->AxisMove(i, 0.0f, 5.0f);
-          }
-        }
-      }
-      break;
-
-    default:
-      break;
-    }
+  // Sync basic state back if needed (e.g. is_paused)
+  bool ctrl_paused = AmrController::Instance().IsPaused();
+  if (is_paused_ != ctrl_paused) {
+    is_paused_ = ctrl_paused;
+    cv_.notify_all();
   }
 }
 
@@ -156,6 +59,7 @@ void AppModel::SetPaused(bool paused) {
     std::lock_guard<std::mutex> lock(mtx_);
     is_paused_ = paused;
   }
+  AmrController::Instance().SetPaused(paused);
   cv_.notify_all();
 }
 
@@ -182,26 +86,18 @@ void AppModel::WaitForResume() {
 
 // --- Axis Control ---
 void AppModel::AxisMove(int axis, float pos, float vel) {
-  if (axis < 0 || axis >= 3)
-    return;
-  std::lock_guard<std::mutex> lock(mtx_);
-  hardware_->AxisMove(axis, pos, vel);
+  AmrController::Instance().AxisMove(axis, pos, vel);
 }
 
 float AppModel::GetAxisPos(int axis) const {
-  if (axis < 0 || axis >= 3)
-    return 0.0f;
-  std::lock_guard<std::mutex> lock(mtx_);
-  return hardware_->GetAxisPos(axis);
+  return AmrController::Instance().GetAxisPos(axis);
 }
 
 bool AppModel::IsAxisMoving(int axis) const {
-  if (axis < 0 || axis >= 3)
-    return false;
-  std::lock_guard<std::mutex> lock(mtx_);
-  return hardware_->IsAxisMoving(axis);
+  return AmrController::Instance().IsAxisMoving(axis);
 }
 
+// --- Physics ---
 // --- Physics ---
 void AppModel::UpdatePhysics(float dt) {
   std::lock_guard<std::mutex> lock(mtx_);
@@ -210,99 +106,66 @@ void AppModel::UpdatePhysics(float dt) {
   if (is_paused_)
     return;
 
-  if (hardware_) {
-    hardware_->Update(dt);
-  }
+  // Removed hardware_->Update(dt) as it is handled by AmrController::Update()
+  // via UpdateSafetyLogic But wait, UpdateSafetyLogic calls
+  // AmrController::Update. Is UpdateSafetyLogic called every frame? Yes in
+  // main.cpp. So we don't need to call it here.
 
-  // Particles
-  for (auto &p : particles_) {
-    if (p.life > 0) {
-      p.x += p.vx;
-      p.y += p.vy;
-      p.life -= 0.02f;
-    }
-  }
+  // Delegate Visual Physics (Particles, Shake, etc.)
+  // We need to unlock if SimulatorCore uses its own lock?
+  // SimulatorCore has its own mutex. AppModel has mtx_.
+  // If we hold mtx_ and call SimulatorCore which locks its mtx_, it's fine
+  // unless SimulatorCore calls back to AppModel (Cycle).
+  // SimulatorCore is a leaf. So it is fine.
+  SimulatorCore::Instance().Update(dt);
 }
 
 // --- I/O ---
 void AppModel::SetDO(int port, bool val) {
-  if (port < 0 || port >= 8)
-    return;
-  std::lock_guard<std::mutex> lock(mtx_);
-  hardware_->SetDO(port, val);
+  AmrController::Instance().SetDO(port, val);
 }
 
 bool AppModel::GetDO(int port) const {
-  if (port < 0 || port >= 8)
-    return false;
-  std::lock_guard<std::mutex> lock(mtx_);
-  return hardware_->GetDO(port);
+  return AmrController::Instance().GetDO(port);
 }
 
 bool AppModel::GetDI(int port) const {
-  if (port < 0 || port >= 8)
-    return false;
-  std::lock_guard<std::mutex> lock(mtx_);
-  return hardware_->GetDI(port);
+  return AmrController::Instance().GetDI(port);
 }
 
 void AppModel::SetDI(int port, bool val) {
-  if (port < 0 || port >= 8)
-    return;
-  std::lock_guard<std::mutex> lock(mtx_);
-  hardware_->SetDI(port, val);
-
-  // Log it to console for debugging
-  console_log_ += "[Hw] SetDI(" + std::to_string(port) +
-                  ") = " + (val ? "HIGH" : "LOW") + "\n";
-  std::cout << "[Hw] SetDI(" << port << ") = " << (val ? "HIGH" : "LOW")
-            << std::endl;
+  AmrController::Instance().SetDI(port, val);
 }
 
 // --- Registers ---
 void AppModel::SetReg(int id, float val) {
-  if (id < 0 || id >= 32)
-    return;
-  std::lock_guard<std::mutex> lock(mtx_);
-  registers_[id] = val;
+  AmrController::Instance().SetReg(id, val);
 }
 
 float AppModel::GetReg(int id) const {
-  if (id < 0 || id >= 32)
-    return 0.0f;
-  std::lock_guard<std::mutex> lock(mtx_);
-  return registers_[id];
+  return AmrController::Instance().GetReg(id);
 }
 
 float AppModel::GetParam(const std::string &name) const {
-  std::lock_guard<std::mutex> lock(mtx_);
-  for (const auto &p : params_) {
-    if (p.name == name)
-      return p.value;
-  }
-  return 0.0f;
+  return AmrController::Instance().GetParam(name);
 }
 
 void AppModel::SetGlobalParams(const std::vector<GlobalParam> &params) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  params_ = params;
+  AmrController::Instance().SetGlobalParams(params);
 }
+
+// ...
 
 // --- Visuals ---
 void AppModel::PushDrawCmd(const DrawCmd &cmd) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  draw_queue_.push_back(cmd);
+  SimulatorCore::Instance().PushDrawCmd(cmd);
 }
 
 std::vector<DrawCmd> AppModel::GetDrawQueue() {
-  std::lock_guard<std::mutex> lock(mtx_);
-  return draw_queue_; // Return a copy
+  return SimulatorCore::Instance().GetDrawQueue();
 }
 
-void AppModel::ClearDrawQueue() {
-  std::lock_guard<std::mutex> lock(mtx_);
-  draw_queue_.clear();
-}
+void AppModel::ClearDrawQueue() { SimulatorCore::Instance().ClearDrawQueue(); }
 
 void AppModel::LogMessage(const std::string &msg) {
   std::lock_guard<std::mutex> lock(mtx_);
@@ -312,20 +175,12 @@ void AppModel::LogMessage(const std::string &msg) {
 
 // --- Particles ---
 void AppModel::SpawnParticles(float x, float y, int count, int color) {
-  std::lock_guard<std::mutex> lock(mtx_);
-  for (int i = 0; i < count; ++i) {
-    Particle p;
-    p.x = x;
-    p.y = y;
-    p.vx = ((rand() % 100) / 10.0f) - 5.0f;
-    p.vy = ((rand() % 100) / 10.0f) - 5.0f;
-    p.life = 1.0f;
-    p.color = static_cast<unsigned int>(color);
-    particles_.push_back(p);
-  }
+  SimulatorCore::Instance().SpawnParticles(x, y, count, color);
 }
 
-std::vector<Particle> &AppModel::GetParticles() { return particles_; }
+std::vector<Particle> &AppModel::GetParticles() {
+  return SimulatorCore::Instance().GetParticles();
+}
 
 // --- Input State ---
 void AppModel::SetInputSticky(const std::string &key, bool val) {
@@ -382,7 +237,9 @@ std::vector<Mechanism> &AppModel::GetMechanisms() {
 
 std::vector<VisualBlock> &AppModel::GetBlocks() { return blocks_; }
 
-std::vector<GlobalParam> &AppModel::GetGlobalParams() { return params_; }
+std::vector<GlobalParam> &AppModel::GetGlobalParams() {
+  return AmrController::Instance().GetGlobalParams();
+}
 
 // --- Script Helpers ---
 void AppModel::SetNextBlockId(int id) {
@@ -449,24 +306,21 @@ std::string AppModel::GetScreenshotFile() const {
 
 void AppModel::ClearScreenshotRequest() { screenshot_req_ = false; }
 
-void AppModel::SetShakeTimer(float force) { shake_timer_ = force; }
-
-float AppModel::GetShakeTimer() const { return shake_timer_; }
-
-void AppModel::ReduceShakeTimer(float dt) {
-  if (shake_timer_ > 0) {
-    shake_timer_ -= dt;
-    if (shake_timer_ < 0)
-      shake_timer_ = 0;
-  }
+void AppModel::SetShakeTimer(float force) {
+  SimulatorCore::Instance().SetShakeTimer(force);
 }
 
-// Motion Extras
+float AppModel::GetShakeTimer() const {
+  return SimulatorCore::Instance().GetShakeTimer();
+}
+
+void AppModel::ReduceShakeTimer(float dt) {
+  // handled by SimulatorCore::Update()
+}
+
+// --- Additional Helpers ---
 void AppModel::SetAxisCurrentPos(int axis, float pos) {
-  if (axis >= 0 && axis < 3) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    hardware_->SetAxisData(axis, pos);
-  }
+  AmrController::Instance().SetAxisCurrentPos(axis, pos);
 }
 
 void AppModel::SetLocals(const std::map<std::string, std::string> &locals) {

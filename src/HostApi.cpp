@@ -185,6 +185,11 @@ void set_paused(bool paused) {
                             : "[DEBUG] set_paused(False)\n");
 }
 
+void configure_input(int pin, int action, bool invert, bool edge) {
+  // Cast int action to InputAction enum
+  Model().MapInput(pin, (InputAction)action, invert, edge);
+}
+
 // Module
 PYBIND11_EMBEDDED_MODULE(host_api, m) {
   m.def("log_message", &log_message);
@@ -231,20 +236,12 @@ PYBIND11_EMBEDDED_MODULE(host_api, m) {
   m.def("set_paused", &set_paused, "Pause/Resume System");
 
   // Safety Config
-  m.def(
-      "configure_input",
-      [](int pin, int action, bool invert, bool edge) {
-        // Map int to InputAction
-        auto act = static_cast<amr::AppModel::InputAction>(action);
-        Model().MapInput(pin, act, invert, edge);
-        Model().LogMessage("[Sys] Input Mapped: Pin " + std::to_string(pin) +
-                           " -> Action " + std::to_string(action));
-      },
-      "Configure DI Pin: pin, action(0=None,1=EStop,2=PauseTog,3=Home), "
-      "invert, edge");
+  m.def("configure_input", &configure_input,
+        "Configure DI Pin: pin, action(0=None,1=EStop,2=PauseTog,3=Home), "
+        "invert, edge");
 
-  // Hardcoded Logic for Demo Safety Monitor
-  m.def("demo_safety_check", []() {
+  // Hardcoded Logic for Demo
+  m.def("check_safety", []() {
     // Legacy: This logic has been moved to AppModel::UpdateSafetyLogic()
   });
 

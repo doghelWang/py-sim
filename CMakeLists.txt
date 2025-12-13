@@ -70,6 +70,8 @@ set(IMGUI_DIR ${imgui_SOURCE_DIR})
 add_library(amr_core STATIC
     src/amr/AppModel.cpp
     src/amr/Hardware.cpp
+    src/amr/AmrController.cpp
+    src/amr/SimulatorCore.cpp
     # src/GuiLayer.cpp # Dependencies on legacy AppState prevent this yet
     # src/HostApi.cpp 
 )

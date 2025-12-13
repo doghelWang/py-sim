@@ -33,17 +33,25 @@ struct Axis {
 enum class BlockType {
   MOVE_AXIS,
   WAIT,
-  DRILL_OP,
-  LOG_MSG,
   HOME_AXIS,
   SET_DO,
   WAIT_DI,
-  LOOP_START,
-  LOOP_END,
+  IF_REG,
   SET_REG,
   MATH_REG,
-  IF_REG,
-  CONFIG_SAFETY
+  LOOP_START,
+  LOOP_END,
+  LOG_MSG,
+  CONFIG_SAFETY // New Block Type for Safety Config
+};
+
+// Input Actions for Safety Config (Match AppModel/AmrController)
+enum class InputAction { NONE = 0, ESTOP = 1, PAUSE_TOGGLE = 2, HOME_ALL = 3 };
+
+struct InputConfig {
+  InputAction action = InputAction::NONE;
+  bool invert = false;
+  bool edge_trigger = false;
 };
 
 struct VisualBlock {

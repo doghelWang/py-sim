@@ -14,18 +14,7 @@ namespace amr {
 class AppModel {
 public:
   // 定义输入与安全动作枚举
-  enum class InputAction {
-    NONE = 0,
-    ESTOP,        // 急停 (Hold to Stop): High=Stop, Low=Resume (if recovered)
-    PAUSE_TOGGLE, // 暂停/恢复切换 (Edge Trigger)
-    HOME_ALL,     // 全部回零 (Edge Trigger)
-  };
-
-  struct InputConfig {
-    InputAction action = InputAction::NONE;
-    bool invert = false;       // True: Low Active, False: High Active
-    bool edge_trigger = false; // True: Action on Edge, False: Action on Level
-  };
+  // InputAction moved to Types.hpp
 
   // 单例访问器 (用于主要访问点)
   static AppModel &Instance();
@@ -137,8 +126,7 @@ private:
   AppModel();
   ~AppModel() = default;
 
-  // Hardware Abstraction
-  std::unique_ptr<IHardware> hardware_;
+  // Hardware Abstraction delegated to AmrController
 
   mutable std::mutex mtx_;
   std::condition_variable cv_;
@@ -157,11 +145,10 @@ private:
   // Axis axes_[3]; // Removed
   // bool di_[8] = {false}; // Removed
   // bool do_[8] = {false}; // Removed
-  float registers_[32] = {0};
 
   // Data
   std::vector<Mechanism> mechanisms_;
-  std::vector<GlobalParam> params_;
+  // std::vector<GlobalParam> params_; // Delegated to AmrController
   std::vector<VisualBlock> blocks_;
 
   // Visuals
