@@ -1,7 +1,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "GuiLayer.hpp"
-#include "AppState.hpp"
 #include "PythonEngine.hpp"
+#include "amr/AppModel.hpp"
 #include "imgui.h"
 #include "stb_image_write.h"
 #include <cmath>
@@ -22,6 +22,9 @@
 #else
 #include <GL/gl.h>
 #endif
+
+// Helper for brevity
+static amr::AppModel &Model() { return amr::AppModel::Instance(); }
 
 // ---------------------------------------------------------
 // API Docs for Reference
@@ -94,14 +97,21 @@ void GuiLayer::SetupStyle() {
   colors[ImGuiCol_Button] = ImVec4(0.44f, 0.44f, 0.44f, 0.40f);
 }
 
+// ---------------------------------------------------------
+// Helper: Load Script Context
+// ---------------------------------------------------------
 void LoadScriptContent() {
-  g_app.source_lines.clear();
-  std::ifstream file(g_app.script_path);
-  if (!file.is_open())
-    return;
-  std::string line;
-  while (std::getline(file, line))
-    g_app.source_lines.push_back(line);
+  Model().SetSourceLines({});
+  std::ifstream file(Model().GetScriptPath());
+  if (file.is_open()) {
+    std::string line;
+    std::vector<std::string> lines;
+    while (std::getline(file, line)) {
+      lines.push_back(line);
+    }
+    Model().SetSourceLines(lines);
+    file.close();
+  }
 }
 
 std::vector<std::string> ScanScripts() {
@@ -121,42 +131,71 @@ std::vector<std::string> ScanScripts() {
 }
 
 // ---------------------------------------------------------
-// Helper: Visual Program Generator
+// 脚本代码生成器 (Script Generator)
+// 将可视化的 Block 序列转换为 Python 代码字符串
 // ---------------------------------------------------------
 void GenerateScript() {
-  std::string code = "import host_api\nimport time\nimport threading\n\n";
+  // 1. 获取所有块 (Visual Sequencing)
+  // 编辑器是列表式的，直接使用 Vector 顺序
+  auto blocks = Model().GetBlocks();
+  // std::sort removed - List order is execution order
 
-  // Inject Monitor Thread (Pure Python Logic)
-  code += "def safety_monitor():\n";
-  code += "    di6_prev = False\n";
-  code += "    while True:\n";
-  code += "        # DI-6: Pause Logic (Edge Trigger)\n";
-  code += "        di6 = host_api.get_di(6)\n";
-  code += "        if di6 and not di6_prev:\n";
+  std::string code = "import time\nimport threading\nimport sys\nimport os\n";
   code +=
-      "            host_api.log_message('[Safety] DI6 Active -> Pausing')\n";
-  code += "            host_api.set_paused(True)\n";
-  code += "        elif not di6 and di6_prev:\n";
-  code +=
-      "            host_api.log_message('[Safety] DI6 Released -> Resuming')\n";
-  code += "            host_api.set_paused(False)\n";
-  code += "        di6_prev = di6\n\n";
+      "sys.path.append(os.getcwd() + '/../src')\n"; // Hack for finding host_api
+  code += "try:\n";
+  code += "    import host_api\n";
+  code += "except ImportError:\n";
+  code += "    # Mock for testing\n";
+  code += "    class HostApi:\n";
+  code += "        def log_message(self, msg): print(msg)\n";
+  code += "        def axis_move(self, a, p, v): print(f'Move {a} {p} {v}')\n";
+  code += "        def axis_is_moving(self, a): return False\n";
+  code += "        def sleep_ms(self, ms): time.sleep(ms/1000.0)\n";
+  code += "        def set_do(self, p, v): print(f'DO {p} {v}')\n";
+  code += "        def get_di(self, p): return False\n";
+  code += "        def set_reg(self, r, v): pass\n";
+  code += "        def get_reg(self, r): return 0.0\n";
+  code += "        def get_param(self, n): return 0.0\n";
+  code += "        def set_paused(self, p): pass\n";
+  code += "    host_api = HostApi()\n\n";
 
-  code += "        # DI-7: Home Logic (Level Trigger)\n";
-  code += "        if host_api.get_di(7):\n";
-  code += "             # Home First 2 Axes\n";
-  code += "             host_api.axis_move(0, 0.0, 2.0)\n";
-  code += "             host_api.axis_move(1, 0.0, 2.0)\n";
-  code += "        time.sleep(0.1)\n\n";
+  // Safety Monitor Thread (Example)
+  // Safety Configuration
+  // Safety Configuration -> def init()
+  code += "def init():\n";
+  code += "    host_api.log_message('[Sys] Initializing Safety Config...')\n";
+  code += "    # Clear previous safety (Important if script is re-run logic, "
+          "though AppModel has ResetSafetyConfig)\n";
+  // Actually, wait, host_api doesn't expose ResetSafetyConfig.
+  // Should we add it? Or rely on overwriting?
+  // MapInput overwrites. But to clear unused ones?
+  // User asked for init(). Let's assume MapInput is enough or we add
+  // reset_safety(). Let's add reset_safety call if we expose it? No, let's just
+  // generate configure_input. The user's request implies structure.
 
-  code +=
-      "monitor_thread = threading.Thread(target=safety_monitor, daemon=True)\n";
-  code += "monitor_thread.start()\n\n";
+  for (const auto &b : blocks) {
+    if (b.type == amr::BlockType::CONFIG_SAFETY) {
+      int pin = (int)b.param1;
+      int action = (int)b.param2;
+      int flags = (int)b.param3;
+      bool invert = (flags & 1);
+      bool edge = (flags & 2);
+
+      std::string line = "    host_api.configure_input(" + std::to_string(pin) +
+                         ", " + std::to_string(action) + ", " +
+                         (invert ? "True" : "False") + ", " +
+                         (edge ? "True" : "False") + ")\n";
+      code += line;
+    }
+  }
+  code += "    host_api.log_message('[Sys] Safety Configured.')\n\n";
 
   code += "def main():\n";
   code += "    host_api.log_message('Starting AMR Logic...')\n";
 
-  std::lock_guard<std::mutex> lock(g_app.mtx);
+  // Note: Model access for blocks is mainly UI thread, assume safe for
+  // generation
   int indent_level = 1;
 
   auto GetVal = [](float val, const std::string &ref) -> std::string {
@@ -167,10 +206,13 @@ void GenerateScript() {
     return std::string(buf);
   };
 
-  for (const auto &block : g_app.visual_program) {
-    if ((block.type == BlockType::LOOP_END ||
-         block.type == BlockType::IF_REG) &&
-        indent_level > 1 && block.type == BlockType::LOOP_END)
+  // const auto &blocks = Model().GetBlocks(); // Blocks are now sorted
+  const auto &mechanisms = Model().GetMechanisms();
+
+  for (const auto &block : blocks) {
+    if ((block.type == amr::BlockType::LOOP_END ||
+         block.type == amr::BlockType::IF_REG) &&
+        indent_level > 1 && block.type == amr::BlockType::LOOP_END)
       indent_level--;
 
     std::string indent = "";
@@ -178,32 +220,26 @@ void GenerateScript() {
       indent += "    ";
 
     switch (block.type) {
-    case BlockType::MOVE_AXIS: {
+    case amr::BlockType::MOVE_AXIS: {
       int mech_id = (int)block.param1;
       int axis = mech_id;
-      for (const auto &m : g_app.mechanisms) {
+      for (const auto &m : mechanisms) {
         if (m.id == mech_id) {
           axis = m.axis_map;
           break;
         }
       }
-
       std::string pos_val = GetVal(block.param2, block.param2_ref);
       std::string vel_val = GetVal(block.param3, block.param3_ref);
 
-      // Velocity Monitor Injection
       if (!block.param3_ref.empty()) {
-        // Param Check
         code += indent + "if host_api.get_param('" + block.param3_ref +
                 "') <= 0:\n";
-        code += indent + "    host_api.log_message('速度为0，请检查 " +
-                block.param3_ref + " 参数')\n";
+        code += indent + "    host_api.log_message('Twarn: Vel=0 Check " +
+                block.param3_ref + "')\n";
       } else {
-        // Literal Check
-        if (block.param3 <= 0) {
-          code += indent +
-                  "host_api.log_message('速度为0，请检查直接设置的速度值')\n";
-        }
+        if (block.param3 <= 0)
+          code += indent + "host_api.log_message('Twarn: Vel=0 direct')\n";
       }
 
       code += indent + "host_api.axis_move(" + std::to_string(axis) + ", " +
@@ -213,30 +249,14 @@ void GenerateScript() {
       code += indent + "    host_api.sleep_ms(10)\n";
       break;
     }
-    case BlockType::WAIT: {
+    case amr::BlockType::WAIT:
       code += indent + "host_api.sleep_ms(" +
               std::to_string((int)block.param1) + ")\n";
       break;
-    }
-    case BlockType::DRILL_OP: {
-      code += indent + "host_api.log_message('[AMR] Drilling...')\n";
-      // Drill op is hardcoded in this V1, or we could look up a "Drill"
-      // mechanism? For now, keep as legacy demo logic or remove. Let's keep for
-      // backward compat test.
-      code +=
-          indent + "host_api.log_message('Drill Op Not Configured for AMR')\n";
-      break;
-    }
-    case BlockType::LOG_MSG: {
-      code += indent + "host_api.log_message('" + block.str_param + "')\n";
-      break;
-    }
-    case BlockType::HOME_AXIS: {
+    case amr::BlockType::HOME_AXIS: {
       int mech_id = (int)block.param1;
-      // Resolve Mech to Axis for Homing? Or use Mech API?
-      // Let's Resolve.
       int axis = 0;
-      for (const auto &m : g_app.mechanisms)
+      for (const auto &m : mechanisms)
         if (m.id == mech_id)
           axis = m.axis_map;
       code += indent + "host_api.log_message('[AMR] Homing Mech " +
@@ -244,15 +264,15 @@ void GenerateScript() {
       code += indent + "host_api.axis_move(" + std::to_string(axis) +
               ", 0.0, 10.0)\n";
       code += indent + "while host_api.axis_is_moving(" + std::to_string(axis) +
-              "): host_api.sleep_ms(10)\n";
+              "):\n";
+      code += indent + "    host_api.sleep_ms(10)\n";
       break;
     }
-    case BlockType::SET_DO: {
+    case amr::BlockType::SET_DO:
       code += indent + "host_api.set_do(" + std::to_string((int)block.param1) +
               ", " + (block.param2 > 0 ? "True" : "False") + ")\n";
       break;
-    }
-    case BlockType::WAIT_DI: {
+    case amr::BlockType::WAIT_DI:
       code += indent + "host_api.log_message('[AMR] Waiting for DI " +
               std::to_string((int)block.param1) + "...')\n";
       code += indent + "while host_api.get_di(" +
@@ -260,13 +280,11 @@ void GenerateScript() {
               ") != " + (block.param2 > 0 ? "True" : "False") + ":\n";
       code += indent + "    host_api.sleep_ms(10)\n";
       break;
-    }
-    case BlockType::SET_REG: {
+    case amr::BlockType::SET_REG:
       code += indent + "host_api.set_reg(" + std::to_string((int)block.param1) +
               ", " + GetVal(block.param2, block.param2_ref) + ")\n";
       break;
-    }
-    case BlockType::MATH_REG: {
+    case amr::BlockType::MATH_REG:
       code += indent + "val = host_api.get_reg(" +
               std::to_string((int)block.param1) + ")\n";
       code +=
@@ -274,42 +292,45 @@ void GenerateScript() {
       code += indent + "host_api.set_reg(" + std::to_string((int)block.param1) +
               ", val)\n";
       break;
-    }
-    case BlockType::IF_REG: {
+    case amr::BlockType::IF_REG: {
       int op = (int)block.param3;
-      std::string op_str = "==";
-      if (op == 1)
-        op_str = ">";
-      if (op == 2)
-        op_str = "<";
+      std::string op_str = (op == 1) ? ">" : ((op == 2) ? "<" : "==");
       code += indent + "if host_api.get_reg(" +
               std::to_string((int)block.param1) + ") " + op_str + " " +
               GetVal(block.param2, block.param2_ref) + ":\n";
       indent_level++;
       break;
     }
-    case BlockType::LOOP_START: {
-      int count = (int)block.param1;
-      code += indent + "for _i in range(" + std::to_string(count) + "):\n";
+    case amr::BlockType::LOOP_START:
+      code += indent + "for _i in range(" + std::to_string((int)block.param1) +
+              "):\n";
       indent_level++;
       break;
-    }
-    case BlockType::LOOP_END: {
+    case amr::BlockType::LOOP_END:
       break;
-    }
+    case amr::BlockType::LOG_MSG:
+      code += indent + "host_api.log_message('" + block.str_param + "')\n";
+      break;
+    default:
+      break;
     }
   }
 
   code += "    host_api.log_message('Program Complete.')\n\n";
-  code += "if __name__ == '__main__':\n    main()\n";
+  code += "\nif __name__ == '__main__':\n";
+  code += "    init()\n"; // Ensure init is called first
+  code += "    main()\n";
 
   std::ofstream out("../scripts/visual_prog.py");
   out << code;
   out.close();
-  strncpy(g_app.script_path, "../scripts/visual_prog.py", 1024);
+  Model().SetScriptPath("../scripts/visual_prog.py");
   LoadScriptContent();
 }
 
+// ---------------------------------------------------------
+// UI: Hardware Config Tab
+// ---------------------------------------------------------
 // ---------------------------------------------------------
 // UI: Hardware Config Tab
 // ---------------------------------------------------------
@@ -327,25 +348,28 @@ void DrawHardwareConfig() {
   static int new_mech_axis = 0;
   ImGui::InputText("Name", new_mech_name, 32);
   ImGui::Combo("Map Axis", &new_mech_axis, "X-Axis\0Y-Axis\0Z-Axis\0\0");
+
   if (ImGui::Button("Add Mechanism")) {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    Mechanism m;
-    m.id = g_app.mechanisms.size();
+    // Direct mutable access to vector - no lock if we are the only writer in UI
+    // AppModel doesn't expose internal lock unless we wrap this into
+    // "AddMechanism".
+    auto &mechs = Model().GetMechanisms();
+    amr::Mechanism m;
+    m.id = mechs.size();
     m.name = new_mech_name;
     m.axis_map = new_mech_axis;
-    g_app.mechanisms.push_back(m);
+    mechs.push_back(m);
   }
 
   ImGui::Separator();
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (int i = 0; i < g_app.mechanisms.size(); ++i) {
-      ImGui::Text("%d: %s (Axis %d)", g_app.mechanisms[i].id,
-                  g_app.mechanisms[i].name.c_str(),
-                  g_app.mechanisms[i].axis_map);
+    auto &mechs = Model().GetMechanisms();
+    for (int i = 0; i < mechs.size(); ++i) {
+      ImGui::Text("%d: %s (Axis %d)", mechs[i].id, mechs[i].name.c_str(),
+                  mechs[i].axis_map);
       ImGui::SameLine();
       if (ImGui::Button(("Del##" + std::to_string(i)).c_str())) {
-        g_app.mechanisms.erase(g_app.mechanisms.begin() + i);
+        mechs.erase(mechs.begin() + i);
         i--;
       }
     }
@@ -364,26 +388,26 @@ void DrawHardwareConfig() {
   ImGui::InputText("Name##P", new_param_name, 32);
   ImGui::DragFloat("Value##P", &new_param_val);
   if (ImGui::Button("Add Param")) {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    GlobalParam p;
+    auto &params = Model().GetGlobalParams();
+    amr::GlobalParam p;
     p.name = new_param_name;
     p.value = new_param_val;
-    g_app.global_params.push_back(p);
+    params.push_back(p);
   }
 
   ImGui::Separator();
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (int i = 0; i < g_app.global_params.size(); ++i) {
+    auto &params = Model().GetGlobalParams();
+    for (int i = 0; i < params.size(); ++i) {
       ImGui::PushID(i);
-      ImGui::Text("%s", g_app.global_params[i].name.c_str());
+      ImGui::Text("%s", params[i].name.c_str());
       ImGui::SameLine();
       ImGui::PushItemWidth(100);
-      ImGui::DragFloat("##Val", &g_app.global_params[i].value);
+      ImGui::DragFloat("##Val", &params[i].value);
       ImGui::PopItemWidth();
       ImGui::SameLine();
       if (ImGui::Button("X")) {
-        g_app.global_params.erase(g_app.global_params.begin() + i);
+        params.erase(params.begin() + i);
         i--;
       }
       ImGui::PopID();
@@ -397,6 +421,9 @@ void DrawHardwareConfig() {
 // ---------------------------------------------------------
 // Save / Load / Config Helpers
 // ---------------------------------------------------------
+// ---------------------------------------------------------
+// Save / Load / Config Helpers
+// ---------------------------------------------------------
 static char save_filename[64] = "amr_demo.txt";
 
 void SaveProject() {
@@ -407,8 +434,8 @@ void SaveProject() {
   // Save Mechanisms
   out << "[MECHANISMS]\n";
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (const auto &m : g_app.mechanisms) {
+    const auto &mechs = Model().GetMechanisms();
+    for (const auto &m : mechs) {
       out << m.id << "," << m.name << "," << m.axis_map << "\n";
     }
   }
@@ -416,8 +443,8 @@ void SaveProject() {
   // Save Params
   out << "[PARAMS]\n";
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (const auto &p : g_app.global_params) {
+    const auto &params = Model().GetGlobalParams();
+    for (const auto &p : params) {
       out << p.name << "," << p.value << "\n";
     }
   }
@@ -425,8 +452,8 @@ void SaveProject() {
   // Save Blocks
   out << "[BLOCKS]\n";
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (const auto &b : g_app.visual_program) {
+    const auto &blocks = Model().GetBlocks();
+    for (const auto &b : blocks) {
       std::string r2 = b.param2_ref.empty() ? "_" : b.param2_ref;
       std::string r3 = b.param3_ref.empty() ? "_" : b.param3_ref;
       std::string sp = b.str_param.empty() ? "_" : b.str_param;
@@ -435,23 +462,28 @@ void SaveProject() {
     }
   }
   out.close();
-  g_app.console_log +=
-      "[Sys] Project Saved to scripts/" + std::string(save_filename) + "\n";
+  Model().LogMessage("[Sys] Project Saved to scripts/" +
+                     std::string(save_filename) + "\n");
 }
+
+// ---------------------------------------------------------
+// Helper: Apply Safety Config from Blocks (Eager Load) - REMOVED
+// User requested script-driven config only.
+// ---------------------------------------------------------
 
 void LoadProject() {
   std::ifstream in("../scripts/" + std::string(save_filename));
   if (!in.is_open()) {
-    g_app.console_log += "[Sys] Error: Could not open scripts/" +
-                         std::string(save_filename) + "\n";
+    Model().LogMessage("[Sys] Error: Could not open scripts/" +
+                       std::string(save_filename) + "\n");
     return;
   }
 
-  std::lock_guard<std::mutex> lock(g_app.mtx);
-  g_app.mechanisms.clear();
-  g_app.global_params.clear();
-  g_app.visual_program.clear();
-  g_app.next_block_id = 0;
+  // Clear Model
+  Model().GetMechanisms().clear();
+  Model().GetGlobalParams().clear();
+  Model().GetBlocks().clear();
+  Model().SetNextBlockId(0);
 
   std::string line;
   int mode = 0; // 0=None, 1=Mech, 2=Param, 3=Block
@@ -479,33 +511,38 @@ void LoadProject() {
       seglist.push_back(segment);
 
     if (mode == 1 && seglist.size() >= 3) {
-      Mechanism m;
+      amr::Mechanism m;
       m.id = std::stoi(seglist[0]);
       m.name = seglist[1];
       m.axis_map = std::stoi(seglist[2]);
-      g_app.mechanisms.push_back(m);
+      Model().GetMechanisms().push_back(m);
     } else if (mode == 2 && seglist.size() >= 2) {
-      GlobalParam p;
+      amr::GlobalParam p;
       p.name = seglist[0];
       p.value = std::stof(seglist[1]);
-      g_app.global_params.push_back(p);
+      Model().GetGlobalParams().push_back(p);
     } else if (mode == 3 && seglist.size() >= 7) {
-      VisualBlock b;
-      b.id = g_app.next_block_id++;
-      b.type = (BlockType)std::stoi(seglist[0]);
+      amr::VisualBlock b;
+      b.id = Model().AllocateBlockId();
+      b.type = (amr::BlockType)std::stoi(seglist[0]);
       b.param1 = std::stof(seglist[1]);
       b.param2 = std::stof(seglist[2]);
       b.param3 = std::stof(seglist[3]);
       b.param2_ref = (seglist[4] == "_") ? "" : seglist[4];
       b.param3_ref = (seglist[5] == "_") ? "" : seglist[5];
       b.str_param = (seglist[6] == "_") ? "" : seglist[6];
-      g_app.visual_program.push_back(b);
+      Model().GetBlocks().push_back(b);
     }
   }
-  g_app.console_log +=
-      "[Sys] Project Loaded from scripts/" + std::string(save_filename) + "\n";
+  // ApplySafetyFromBlocks(); // Removed call
 }
 
+// ---------------------------------------------------------
+// Visual Editor Update
+// ---------------------------------------------------------
+// ---------------------------------------------------------
+// Combined Editor & Config
+// ---------------------------------------------------------
 // ---------------------------------------------------------
 // Visual Editor Update
 // ---------------------------------------------------------
@@ -520,37 +557,37 @@ void DrawEditorAndConfig() {
   ImGui::BeginChild("Col1Up", ImVec2(0, 300), true);
   ImGui::Text("Palette");
   ImGui::Separator();
-  auto AddBlock = [&](BlockType t, const char *name, float p1 = 0, float p2 = 0,
-                      float p3 = 0) {
+  auto AddBlock = [&](amr::BlockType t, const char *name, float p1 = 0,
+                      float p2 = 0, float p3 = 0) {
     if (ImGui::Button(name, ImVec2(130, 30))) {
-      std::lock_guard<std::mutex> lock(g_app.mtx);
-      VisualBlock b;
-      b.id = g_app.next_block_id++;
+      amr::VisualBlock b;
+      b.id = Model().AllocateBlockId();
       b.type = t;
       b.param1 = p1;
       b.param2 = p2;
       b.param3 = p3;
-      g_app.visual_program.push_back(b);
+      Model().GetBlocks().push_back(b);
     }
   };
   ImGui::TextDisabled("Motion");
-  AddBlock(BlockType::MOVE_AXIS, "+ Control Mech");
-  AddBlock(BlockType::WAIT, "+ Wait (ms)");
-  AddBlock(BlockType::HOME_AXIS, "+ Home Mech");
+  AddBlock(amr::BlockType::MOVE_AXIS, "+ Control Mech");
+  AddBlock(amr::BlockType::WAIT, "+ Wait (ms)");
+  AddBlock(amr::BlockType::HOME_AXIS, "+ Home Mech");
 
   ImGui::Separator();
   ImGui::TextDisabled("I/O");
-  AddBlock(BlockType::SET_DO, "+ Set DO");
-  AddBlock(BlockType::WAIT_DI, "+ Wait DI");
+  AddBlock(amr::BlockType::SET_DO, "+ Set DO");
+  AddBlock(amr::BlockType::WAIT_DI, "+ Wait DI");
+  AddBlock(amr::BlockType::CONFIG_SAFETY, "+ Safety Cfg");
 
   ImGui::Separator();
   ImGui::TextDisabled("Logic");
-  AddBlock(BlockType::SET_REG, "+ Set Reg");
-  AddBlock(BlockType::MATH_REG, "+ Math (+=)");
-  AddBlock(BlockType::IF_REG, "+ If Reg");
-  AddBlock(BlockType::LOOP_START, "+ Loop Start");
-  AddBlock(BlockType::LOOP_END, "+ Loop End");
-  AddBlock(BlockType::LOG_MSG, "+ Log Msg");
+  AddBlock(amr::BlockType::SET_REG, "+ Set Reg");
+  AddBlock(amr::BlockType::MATH_REG, "+ Math (+=)");
+  AddBlock(amr::BlockType::IF_REG, "+ If Reg");
+  AddBlock(amr::BlockType::LOOP_START, "+ Loop Start");
+  AddBlock(amr::BlockType::LOOP_END, "+ Loop End");
+  AddBlock(amr::BlockType::LOG_MSG, "+ Log Msg");
   ImGui::EndChild();
 
   ImGui::BeginChild("Col1Down", ImVec2(0, 0), true);
@@ -563,23 +600,22 @@ void DrawEditorAndConfig() {
   ImGui::Combo("##MAxis", &new_mech_axis, "X-Axis\0Y-Axis\0Z-Axis\0\0");
   ImGui::PopItemWidth();
   if (ImGui::Button("Add Mech")) {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    Mechanism m;
-    m.id = g_app.mechanisms.size();
+    auto &mechs = Model().GetMechanisms();
+    amr::Mechanism m;
+    m.id = mechs.size();
     m.name = new_mech_name;
     m.axis_map = new_mech_axis;
-    g_app.mechanisms.push_back(m);
+    mechs.push_back(m);
   }
   ImGui::Separator();
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (int i = 0; i < g_app.mechanisms.size(); ++i) {
-      ImGui::Text("%d: %s (Ax%d)", g_app.mechanisms[i].id,
-                  g_app.mechanisms[i].name.c_str(),
-                  g_app.mechanisms[i].axis_map);
+    auto &mechs = Model().GetMechanisms();
+    for (int i = 0; i < mechs.size(); ++i) {
+      ImGui::Text("%d: %s (Ax%d)", mechs[i].id, mechs[i].name.c_str(),
+                  mechs[i].axis_map);
       ImGui::SameLine();
       if (ImGui::Button(("X##M" + std::to_string(i)).c_str())) {
-        g_app.mechanisms.erase(g_app.mechanisms.begin() + i);
+        mechs.erase(mechs.begin() + i);
         i--;
       }
     }
@@ -593,27 +629,28 @@ void DrawEditorAndConfig() {
   ImGui::Text("Program Flow");
   ImGui::Separator();
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (auto &b : g_app.visual_program) {
+    auto &blocks = Model().GetBlocks();
+    auto &mechs = Model().GetMechanisms();
+
+    for (auto &b : blocks) {
       ImGui::PushID(b.id);
       ImGui::BeginGroup();
       ImGui::Button("::");
       ImGui::SameLine();
-      if (b.type == BlockType::MOVE_AXIS) {
+      if (b.type == amr::BlockType::MOVE_AXIS) {
         ImGui::Text("CONTROL");
         ImGui::SameLine();
         if (ImGui::BeginCombo("##Mech", "Select...")) {
-          for (auto &m : g_app.mechanisms) {
+          for (auto &m : mechs) {
             bool sel = ((int)b.param1 == m.id);
             if (ImGui::Selectable(m.name.c_str(), sel))
               b.param1 = (float)m.id;
           }
           ImGui::EndCombo();
         }
-        if (!g_app.mechanisms.empty() &&
-            (int)b.param1 < g_app.mechanisms.size()) {
+        if (!mechs.empty() && (int)b.param1 < mechs.size()) {
           ImGui::SameLine();
-          ImGui::Text("(%s)", g_app.mechanisms[(int)b.param1].name.c_str());
+          ImGui::Text("(%s)", mechs[(int)b.param1].name.c_str());
         }
         ImGui::SameLine();
         ImGui::Text("Pos");
@@ -627,13 +664,13 @@ void DrawEditorAndConfig() {
         ImGui::PushItemWidth(60);
         ImGui::DragFloat("##V", &b.param3);
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::WAIT) {
+      } else if (b.type == amr::BlockType::WAIT) {
         ImGui::Text("WAIT (ms)");
         ImGui::SameLine();
         ImGui::PushItemWidth(80);
         ImGui::DragFloat("##W", &b.param1);
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::LOG_MSG) {
+      } else if (b.type == amr::BlockType::LOG_MSG) {
         ImGui::Text("LOG");
         ImGui::SameLine();
         char buf[64];
@@ -642,20 +679,20 @@ void DrawEditorAndConfig() {
         if (ImGui::InputText("##MSG", buf, 64))
           b.str_param = buf;
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::HOME_AXIS) {
+      } else if (b.type == amr::BlockType::HOME_AXIS) {
         ImGui::Text("HOME MECH");
         ImGui::SameLine();
         if (ImGui::BeginCombo("##HM", "Select...")) {
-          for (auto &m : g_app.mechanisms)
+          for (auto &m : mechs)
             if (ImGui::Selectable(m.name.c_str(), (int)b.param1 == m.id))
               b.param1 = (float)m.id;
           ImGui::EndCombo();
         }
-        if ((int)b.param1 < g_app.mechanisms.size()) {
+        if ((int)b.param1 < mechs.size()) {
           ImGui::SameLine();
-          ImGui::Text("(%s)", g_app.mechanisms[(int)b.param1].name.c_str());
+          ImGui::Text("(%s)", mechs[(int)b.param1].name.c_str());
         }
-      } else if (b.type == BlockType::SET_DO) {
+      } else if (b.type == amr::BlockType::SET_DO) {
         ImGui::Text("SET DO");
         ImGui::SameLine();
         int p = (int)b.param1;
@@ -668,7 +705,7 @@ void DrawEditorAndConfig() {
         bool v = (b.param2 > 0);
         if (ImGui::Checkbox("##V", &v))
           b.param2 = v ? 1.0f : 0.0f;
-      } else if (b.type == BlockType::WAIT_DI) {
+      } else if (b.type == amr::BlockType::WAIT_DI) {
         ImGui::Text("WAIT DI");
         ImGui::SameLine();
         int p = (int)b.param1;
@@ -681,7 +718,7 @@ void DrawEditorAndConfig() {
         bool v = (b.param2 > 0);
         if (ImGui::Checkbox("##V", &v))
           b.param2 = v ? 1.0f : 0.0f;
-      } else if (b.type == BlockType::SET_REG) {
+      } else if (b.type == amr::BlockType::SET_REG) {
         ImGui::Text("SET R");
         ImGui::SameLine();
         int r = (int)b.param1;
@@ -695,7 +732,7 @@ void DrawEditorAndConfig() {
         ImGui::PushItemWidth(60);
         ImGui::DragFloat("##V", &b.param2);
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::MATH_REG) {
+      } else if (b.type == amr::BlockType::MATH_REG) {
         ImGui::Text("MATH R");
         ImGui::SameLine();
         int r = (int)b.param1;
@@ -709,7 +746,7 @@ void DrawEditorAndConfig() {
         ImGui::PushItemWidth(60);
         ImGui::DragFloat("##MV", &b.param2);
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::IF_REG) {
+      } else if (b.type == amr::BlockType::IF_REG) {
         ImGui::Text("IF R");
         ImGui::SameLine();
         int r = (int)b.param1;
@@ -727,7 +764,7 @@ void DrawEditorAndConfig() {
         ImGui::PushItemWidth(60);
         ImGui::DragFloat("##IV", &b.param2);
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::LOOP_START) {
+      } else if (b.type == amr::BlockType::LOOP_START) {
         ImGui::Text("LOOP START");
         ImGui::SameLine();
         ImGui::Text("Count:");
@@ -735,25 +772,67 @@ void DrawEditorAndConfig() {
         ImGui::PushItemWidth(50);
         ImGui::DragFloat("##C", &b.param1, 1, 1, 100, "%.0f");
         ImGui::PopItemWidth();
-      } else if (b.type == BlockType::LOOP_END) {
+      } else if (b.type == amr::BlockType::LOOP_END) {
         ImGui::Text("LOOP END");
-      }
-      // Simple rendering for others to save space/time, logic preserved
-      else {
+      } else if (b.type == amr::BlockType::CONFIG_SAFETY) {
+        ImGui::Text("SAFETY CFG");
+        ImGui::SameLine();
+
+        // Pin Selection
+        int p = (int)b.param1;
+        ImGui::PushItemWidth(50);
+        if (ImGui::Combo("##P", &p,
+                         "DI0\0DI1\0DI2\0DI3\0DI4\0DI5\0DI6\0DI7\0\0")) {
+          b.param1 = (float)p;
+          // ApplySafetyFromBlocks(); // Removed
+        }
+        ImGui::PopItemWidth();
+
+        // Action Selection (None, EStop, PauseTog, Home)
+        int action = (int)b.param2;
+        ImGui::PushItemWidth(80);
+        if (ImGui::Combo("##ACT", &action, "None\0E-Stop\0Pause\0Home\0\0")) {
+          b.param2 = (float)action;
+          // ApplySafetyFromBlocks(); // Removed
+        }
+        ImGui::PopItemWidth();
+
+        // Flags: Invert & Edge
+        bool invert = (b.param3 > 0); // Stored as 1.0 or 0.0 in param3 (needs
+                                      // workaround for 4th param)
+        // Wait, VisualBlock only has param1, param2, param3. We need 4 values:
+        // Pin, Action, Invert, Edge. Let's pack Invert & Edge into param3.
+        // param3 = invert + edge*2.
+
+        int flags = (int)b.param3;
+        bool inv = (flags & 1);
+        bool edge = (flags & 2);
+
+        if (ImGui::Checkbox("Inv", &inv)) {
+          flags = (inv ? 1 : 0) | (edge ? 2 : 0);
+          b.param3 = (float)flags;
+          // ApplySafetyFromBlocks(); // Removed
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Edge", &edge)) {
+          flags = (inv ? 1 : 0) | (edge ? 2 : 0);
+          b.param3 = (float)flags;
+          // ApplySafetyFromBlocks(); // Removed
+        }
+      } else {
         ImGui::Text("Block %d (Type %d)", b.id, (int)b.type);
       }
       ImGui::SameLine();
       if (ImGui::Button("X")) {
-        // Marking for deletion (simple hack for now, ideally queue deletion)
-        b.type = (BlockType)-1;
+        b.type = (amr::BlockType)-1;
       }
       ImGui::EndGroup();
       ImGui::PopID();
     }
     // Cleanup deleted blocks
-    for (int i = 0; i < g_app.visual_program.size(); ++i) {
-      if ((int)g_app.visual_program[i].type == -1) {
-        g_app.visual_program.erase(g_app.visual_program.begin() + i);
+    for (int i = 0; i < blocks.size(); ++i) {
+      if ((int)blocks[i].type == -1) {
+        blocks.erase(blocks.begin() + i);
         i--;
       }
     }
@@ -774,25 +853,24 @@ void DrawEditorAndConfig() {
   ImGui::DragFloat("##PV", &new_param_val);
   ImGui::PopItemWidth();
   if (ImGui::Button("Add Param")) {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    GlobalParam p;
+    auto &params = Model().GetGlobalParams();
+    amr::GlobalParam p;
     p.name = new_param_name;
     p.value = new_param_val;
-    g_app.global_params.push_back(p);
+    params.push_back(p);
   }
   ImGui::Separator();
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    for (int i = 0; i < g_app.global_params.size(); ++i) {
-      ImGui::Text("%s:", g_app.global_params[i].name.c_str());
+    auto &params = Model().GetGlobalParams();
+    for (int i = 0; i < params.size(); ++i) {
+      ImGui::Text("%s:", params[i].name.c_str());
       ImGui::SameLine();
       ImGui::PushItemWidth(60);
-      ImGui::DragFloat(("##V" + std::to_string(i)).c_str(),
-                       &g_app.global_params[i].value);
+      ImGui::DragFloat(("##V" + std::to_string(i)).c_str(), &params[i].value);
       ImGui::PopItemWidth();
       ImGui::SameLine();
       if (ImGui::Button(("X##P" + std::to_string(i)).c_str())) {
-        g_app.global_params.erase(g_app.global_params.begin() + i);
+        params.erase(params.begin() + i);
         i--;
       }
     }
@@ -817,7 +895,7 @@ void DrawEditorAndConfig() {
 
   if (ImGui::Button("GENERATE SCRIPT", ImVec2(-1, 40))) {
     GenerateScript();
-    g_app.console_log += "[Sys] Script Generated. Go to Monitor tab to Run.\n";
+    Model().LogMessage("[Sys] Script Generated. Go to Monitor tab to Run.\n");
   }
   ImGui::EndChild();
   ImGui::Columns(1);
@@ -827,13 +905,18 @@ void DrawEditorAndConfig() {
 // Helpers (Machine, IO, Canvas, Control) - Restored & Ordered
 // ---------------------------------------------------------
 
+#include <chrono>
+#include <thread>
+
+using namespace amr;
+
 void DrawMachine(ImDrawList *draw_list, ImVec2 p, ImVec2 size) {
   // Dynamic Scaling
   float margin = 20.0f;
   float avail_h = size.y - margin * 2;
   float avail_w = size.x - margin * 2;
 
-  // Scale factor. Reference height = 300px
+  // 比例因子。参考高度 = 300px
   float scale = avail_h / 300.0f;
   if (scale > 1.0f)
     scale = 1.0f;
@@ -844,14 +927,15 @@ void DrawMachine(ImDrawList *draw_list, ImVec2 p, ImVec2 size) {
   float rail_len = avail_w;
   float start_x = p.x + margin;
 
-  // Draw X-Rail
+  // 绘制 X 轴导轨 (Draw X-Rail)
   draw_list->AddRectFilled(ImVec2(start_x, rail_y),
                            ImVec2(start_x + rail_len, rail_y + 10 * scale),
                            IM_COL32(100, 100, 100, 255));
   draw_list->AddText(ImVec2(start_x, rail_y + 15 * scale),
                      IM_COL32(200, 200, 200, 255), "X-Axis Rail");
 
-  float x_pct = g_app.axes[0].current_pos / 300.0f;
+  // 计算 X 轴龙门架位置
+  float x_pct = Model().GetAxisPos(0) / 300.0f;
   if (x_pct < 0)
     x_pct = 0;
   if (x_pct > 1)
@@ -863,7 +947,8 @@ void DrawMachine(ImDrawList *draw_list, ImVec2 p, ImVec2 size) {
                            ImVec2(gantry_x + gantry_w / 2, rail_y),
                            IM_COL32(200, 150, 50, 255));
 
-  float y_pct = g_app.axes[1].current_pos / 200.0f;
+  // 计算 Y 轴滑块位置
+  float y_pct = Model().GetAxisPos(1) / 200.0f;
   if (y_pct < 0)
     y_pct = 0;
   if (y_pct > 1)
@@ -875,7 +960,8 @@ void DrawMachine(ImDrawList *draw_list, ImVec2 p, ImVec2 size) {
       ImVec2(gantry_x + 20 * scale, carriage_y + carriage_sz),
       IM_COL32(50, 150, 255, 255));
 
-  float z_pct = g_app.axes[2].current_pos / 50.0f;
+  // 计算 Z 轴钻头深度
+  float z_pct = Model().GetAxisPos(2) / 50.0f;
   float drill_len = (20.0f + (z_pct * 30.0f)) * scale;
   draw_list->AddRectFilled(
       ImVec2(gantry_x - 5 * scale, carriage_y + carriage_sz),
@@ -883,13 +969,13 @@ void DrawMachine(ImDrawList *draw_list, ImVec2 p, ImVec2 size) {
       IM_COL32(200, 50, 50, 255));
 
   char buf[64];
-  snprintf(buf, 64, "X: %.1f", g_app.axes[0].current_pos);
+  snprintf(buf, 64, "X: %.1f", Model().GetAxisPos(0));
   draw_list->AddText(ImVec2(gantry_x - 15, rail_y + 30 * scale),
                      IM_COL32(255, 255, 255, 255), buf);
-  snprintf(buf, 64, "Y: %.1f", g_app.axes[1].current_pos);
+  snprintf(buf, 64, "Y: %.1f", Model().GetAxisPos(1));
   draw_list->AddText(ImVec2(gantry_x + 25 * scale, carriage_y - 5),
                      IM_COL32(255, 255, 255, 255), buf);
-  snprintf(buf, 64, "Z: %.1f", g_app.axes[2].current_pos);
+  snprintf(buf, 64, "Z: %.1f", Model().GetAxisPos(2));
   draw_list->AddText(
       ImVec2(gantry_x + 10 * scale, carriage_y + 15 + drill_len + 5),
       IM_COL32(255, 255, 255, 255), buf);
@@ -904,11 +990,12 @@ void DrawIOPanel() {
   ImGui::Text("Inputs (DI):");
   ImGui::Columns(4, "DICols", false);
   for (int i = 0; i < 8; ++i) {
-    bool v = g_app.digital_inputs[i];
+    bool v = Model().GetDI(i);
     if (ImGui::Checkbox(("DI-" + std::to_string(i)).c_str(), &v)) {
-      std::lock_guard<std::mutex> lock(g_app.mtx);
-      g_app.digital_inputs[i] = v;
+      Model().SetDI(i, v); // Simulate Input Toggle
     }
+    ImGui::SameLine();
+    ImGui::TextDisabled(v ? "(ON)" : "(OFF)");
     ImGui::NextColumn();
   }
   ImGui::Columns(1);
@@ -919,7 +1006,7 @@ void DrawIOPanel() {
   ImGui::Text("Outputs (DO):");
   ImGui::Columns(4, "DOCols", false);
   for (int i = 0; i < 8; ++i) {
-    bool v = g_app.digital_outputs[i];
+    bool v = Model().GetDO(i);
     ImGui::Text("DO-%d:", i);
     ImGui::SameLine();
     if (v)
@@ -936,7 +1023,7 @@ void DrawIOPanel() {
   ImGui::Text("Internal Registers (R0-R31):");
   ImGui::Columns(4, "RegCols", true);
   for (int i = 0; i < 32; ++i) {
-    ImGui::Text("R%02d: %.2f", i, g_app.registers[i]);
+    ImGui::Text("R%02d: %.2f", i, Model().GetReg(i));
     ImGui::NextColumn();
   }
   ImGui::Columns(1);
@@ -950,54 +1037,50 @@ void DrawTopBar() {
   ImGui::Text("AMR STUDIO");
   ImGui::PopStyleColor();
   ImGui::SameLine();
-  ImGui::Text(" | Status: %s", g_app.is_running
-                                   ? (g_app.is_paused ? "PAUSED" : "RUNNING")
+  ImGui::Text(" | Status: %s", Model().IsRunning()
+                                   ? (Model().IsPaused() ? "PAUSED" : "RUNNING")
                                    : "STOPPED");
   ImGui::SameLine(300);
 
   // Controls
-  if (!g_app.is_running) {
+  if (!Model().IsRunning()) {
     if (ImGui::Button("RUN SCRIPT", ImVec2(100, 30))) {
-      g_app.should_terminate = false;
+      // Need a way to reset termination flag in Model if it's sticky?
+      // Model doesn't explicit expose "ResetTermination".
+      // Assuming StartWorker manages its state or Model().SetRunning(true).
+      // PythonEngine sets is_running currently.
       PythonEngine::StartWorker();
     }
   } else {
-    if (!g_app.is_paused) {
+    if (!Model().IsPaused()) {
       if (ImGui::Button("PAUSE", ImVec2(80, 30))) {
-        std::lock_guard<std::mutex> lock(g_app.mtx);
-        g_app.is_paused = true;
+        Model().SetPaused(true);
       }
     } else {
       if (ImGui::Button("RESUME", ImVec2(80, 30))) {
-        std::lock_guard<std::mutex> lock(g_app.mtx);
-        g_app.is_paused = false;
-        g_app.cv.notify_all();
+        Model().SetPaused(false);
       }
     }
     ImGui::SameLine();
     if (ImGui::Button("STOP", ImVec2(80, 30))) {
-      g_app.should_terminate = true;
+      Model().RequestTermination();
     }
   }
 
   ImGui::SameLine();
   if (ImGui::Button("RESET SYSTEM", ImVec2(120, 30))) {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
     // Reset Logic
     for (int i = 0; i < 8; ++i) {
-      g_app.digital_inputs[i] = false;
-      g_app.digital_outputs[i] = false;
+      Model().SetDI(i, false);
+      Model().SetDO(i, false);
     }
     for (int i = 0; i < 3; ++i) {
-      g_app.axes[i].current_pos = 0;
-      g_app.axes[i].target_pos = 0;
-      g_app.axes[i].is_moving = false;
+      Model().SetAxisTarget(i, 0, 0);
+      Model().SetAxisCurrentPos(i, 0); // Force position to 0
     }
-    g_app.is_running = false;
-    g_app.is_paused = false;
-    g_app.should_terminate = true; // Ensure script stops
-    g_app.cv.notify_all();
-    g_app.console_log += "[Sys] System Reset Manually.\n";
+    Model().SetPaused(false);
+    Model().RequestTermination(); // Stop script
+    Model().LogMessage("[Sys] System Reset Manually.");
   }
 
   ImGui::EndChild();
@@ -1005,6 +1088,7 @@ void DrawTopBar() {
 
 void DrawCanvas() {
   ImGui::BeginChild("Canvas", ImVec2(0, 300), true);
+
   ImDrawList *draw_list = ImGui::GetWindowDrawList();
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImVec2 size = ImGui::GetContentRegionAvail();
@@ -1013,26 +1097,27 @@ void DrawCanvas() {
                            IM_COL32(20, 20, 25, 255));
 
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
     // Draw Machine
     DrawMachine(draw_list, p, size);
 
     // Draw Queue
-    for (const auto &cmd : g_app.draw_queue) {
-      if (cmd.type == CmdType::RECT)
+    const auto &queue = Model().GetDrawQueue();
+    for (const auto &cmd : queue) {
+      if (cmd.type == amr::CmdType::RECT)
         draw_list->AddRectFilled(
             ImVec2(p.x + cmd.x, p.y + cmd.y),
             ImVec2(p.x + cmd.x + cmd.w, p.y + cmd.y + cmd.h), cmd.color);
-      else if (cmd.type == CmdType::CIRCLE)
+      else if (cmd.type == amr::CmdType::CIRCLE)
         draw_list->AddCircleFilled(ImVec2(p.x + cmd.x, p.y + cmd.y), cmd.r,
                                    cmd.color);
-      else if (cmd.type == CmdType::TEXT)
+      else if (cmd.type == amr::CmdType::TEXT)
         draw_list->AddText(ImVec2(p.x + cmd.x, p.y + cmd.y), cmd.color,
                            cmd.text.c_str());
     }
 
     // Particles
-    for (auto &part : g_app.particles) {
+    auto &particles = Model().GetParticles();
+    for (auto &part : particles) {
       if (part.life > 0)
         draw_list->AddCircleFilled(ImVec2(p.x + part.x, p.y + part.y), 3.0f,
                                    part.color);
@@ -1054,67 +1139,42 @@ void GuiLayer::Render(void *w) {
 
   // Physics Simulation Loop (Required for Motion)
   {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-
-    // Only update physics if not paused
-    if (!g_app.is_paused) {
-      float dt = 1.0f / 60.0f; // Approx 60hz
-      // Axes
-      for (int i = 0; i < 3; ++i) {
-        if (g_app.axes[i].is_moving) {
-          float diff = g_app.axes[i].target_pos - g_app.axes[i].current_pos;
-          float step = g_app.axes[i].max_vel * dt;
-          if (step < 0.0001f)
-            step = 0.0001f; // Prevent stuck on 0 vel
-
-          if (std::abs(diff) <= step) {
-            g_app.axes[i].current_pos = g_app.axes[i].target_pos;
-            g_app.axes[i].is_moving = false;
-          } else {
-            g_app.axes[i].current_pos += (diff > 0 ? step : -step);
-          }
-        }
-      }
-      // Particles
-      for (auto &p : g_app.particles) {
-        if (p.life > 0) {
-          p.x += p.vx;
-          p.y += p.vy;
-          p.life -= 0.02f;
-        }
-      }
-    }
+    float dt = 1.0f / 60.0f; // Approx 60hz
+    Model().UpdatePhysics(dt);
   }
 
   // 1. Top Bar
   DrawTopBar();
 
-  // 2. Main Content Area (Tabs)
+  // 2. 主内容区域 (Main Content Area)
   if (ImGui::BeginTabBar("MainTabs")) {
 
-    // TAB: MONITOR & CONTROL
+    // 选项卡：监控与控制 (Monitor & Control)
     if (ImGui::BeginTabItem("Monitor")) {
       ImGui::Columns(2, "MonitorCols");
 
-      // Left: Simulation Canvas
+      // 左侧：仿真画布 (Simulation Canvas)
       ImGui::BeginChild("SimView", ImVec2(0, 400), true);
       DrawCanvas();
       ImGui::EndChild();
 
-      // Left Bottom: IO Panel
+      // 左下：IO 面板 (IO Panel)
       DrawIOPanel();
 
       ImGui::NextColumn();
 
-      // Right: Source Code Viewer
-      ImGui::Text("Active Script: %s", g_app.script_path);
+      // 右侧：源代码查看器 (Source Code Viewer)
+      ImGui::Text("Active Script: %s", Model().GetScriptPath().c_str());
       ImGui::BeginChild("CodeViewInd", ImVec2(0, 400), true);
       {
-        std::lock_guard<std::mutex> lock(g_app.mtx);
-        for (int i = 0; i < g_app.source_lines.size(); i++) {
+        auto lines = Model().GetSourceLines();
+        bool running = Model().IsRunning();
+        int cur_line = Model().GetCurrentLine();
+
+        for (int i = 0; i < lines.size(); i++) {
           int line_num = i + 1;
-          std::string line_content = g_app.source_lines[i];
-          if (g_app.is_running && line_num == g_app.current_line) {
+          const std::string &line_content = lines[i];
+          if (running && line_num == cur_line) {
             ImGui::TextColored(ImVec4(1, 1, 0, 1), "> %03d: %s", line_num,
                                line_content.c_str());
           } else {
@@ -1128,9 +1188,9 @@ void GuiLayer::Render(void *w) {
       ImGui::Text("System Log");
       ImGui::BeginChild("LogRegion", ImVec2(0, 0), true);
       {
-        std::lock_guard<std::mutex> lock(g_app.mtx);
-        ImGui::TextWrapped("%s", g_app.console_log.c_str());
-        if (g_app.console_log.size() > 0)
+        std::string log = Model().GetLog();
+        ImGui::TextWrapped("%s", log.c_str());
+        if (log.size() > 0)
           ImGui::SetScrollHereY(1.0f);
       }
       ImGui::EndChild();

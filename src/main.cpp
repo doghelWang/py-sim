@@ -8,16 +8,13 @@
 #endif
 #include <GLFW/glfw3.h>
 
-#include "AppState.hpp"
 #include "GuiLayer.hpp"
 #include "PythonEngine.hpp"
+#include "amr/AppModel.hpp" // Use AppModel
 #include <pybind11/embed.h>
 // Note: HostApi uses PYBIND11_EMBEDDED_MODULE which registers itself globally.
 
 namespace py = pybind11;
-
-// Define Global State
-AppState g_app;
 
 static void glfw_error_callback(int error, const char *description) {
   fprintf(stderr, "Glfw Error %d: %s\n", error, description);
@@ -64,9 +61,17 @@ int main(int, char **) {
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
 
+  // 3b. Setup Safety Inputs
+  // Safety Inputs are now configured by the Python script (visual_prog.py) via
+  // configure_input()
+  auto &app = amr::AppModel::Instance();
+
   // 4. Main Loop
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
+
+    // Safety Update (Independent of GUI/Python)
+    app.UpdateSafetyLogic(0.016f); // Approx 60Hz dt
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
@@ -86,12 +91,8 @@ int main(int, char **) {
   }
 
   // Cleanup
-  g_app.should_terminate = true;
-  {
-    std::lock_guard<std::mutex> lock(g_app.mtx);
-    g_app.is_paused = false;
-  }
-  g_app.cv.notify_all();
+  amr::AppModel::Instance()
+      .RequestTermination(); // Sets terminate flag and unpauses
 
   // Ensure we wait for python to finish
   PythonEngine::JoinWorker();

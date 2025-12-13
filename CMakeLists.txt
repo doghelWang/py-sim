@@ -47,9 +47,32 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(stb)
 
+# 6. GoogleTest (For Unit Testing)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG        v1.14.0
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
+
+
+enable_testing()
+add_subdirectory(tests)
+
 # --- Configuration ---
 
+
 set(IMGUI_DIR ${imgui_SOURCE_DIR})
+
+# Core Library (No Main)
+add_library(amr_core STATIC
+    src/amr/AppModel.cpp
+    # src/GuiLayer.cpp # Dependencies on legacy AppState prevent this yet
+    # src/HostApi.cpp 
+)
+target_include_directories(amr_core PUBLIC include)
 
 add_executable(demo_gui 
     src/main.cpp 
@@ -63,6 +86,8 @@ add_executable(demo_gui
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
     ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
+
+target_link_libraries(demo_gui PRIVATE amr_core)
 
 target_include_directories(demo_gui PRIVATE 
     include

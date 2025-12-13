@@ -1,34 +1,36 @@
-import host_api
 import time
 import threading
+import sys
+import os
+sys.path.append(os.getcwd() + '/../src')
+try:
+    import host_api
+except ImportError:
+    # Mock for testing
+    class HostApi:
+        def log_message(self, msg): print(msg)
+        def axis_move(self, a, p, v): print(f'Move {a} {p} {v}')
+        def axis_is_moving(self, a): return False
+        def sleep_ms(self, ms): time.sleep(ms/1000.0)
+        def set_do(self, p, v): print(f'DO {p} {v}')
+        def get_di(self, p): return False
+        def set_reg(self, r, v): pass
+        def get_reg(self, r): return 0.0
+        def get_param(self, n): return 0.0
+        def set_paused(self, p): pass
+    host_api = HostApi()
 
-def safety_monitor():
-    di6_prev = False
-    while True:
-        # DI-6: Pause Logic (Edge Trigger)
-        di6 = host_api.get_di(6)
-        if di6 and not di6_prev:
-            host_api.log_message('[Safety] DI6 Active -> Pausing')
-            host_api.set_paused(True)
-        elif not di6 and di6_prev:
-            host_api.log_message('[Safety] DI6 Released -> Resuming')
-            host_api.set_paused(False)
-        di6_prev = di6
-
-        # DI-7: Home Logic (Level Trigger)
-        if host_api.get_di(7):
-             # Home First 2 Axes
-             host_api.axis_move(0, 0.0, 2.0)
-             host_api.axis_move(1, 0.0, 2.0)
-        time.sleep(0.1)
-
-monitor_thread = threading.Thread(target=safety_monitor, daemon=True)
-monitor_thread.start()
+def init():
+    host_api.log_message('[Sys] Initializing Safety Config...')
+    # Clear previous safety (Important if script is re-run logic, though AppModel has ResetSafetyConfig)
+    host_api.configure_input(6, 1, False, False)
+    host_api.configure_input(7, 3, False, True)
+    host_api.log_message('[Sys] Safety Configured.')
 
 def main():
     host_api.log_message('Starting AMR Logic...')
     if host_api.get_param('angle') <= 0:
-        host_api.log_message('速度为0，请检查 angle 参数')
+        host_api.log_message('Twarn: Vel=0 Check angle')
     host_api.axis_move(1, 90.00, host_api.get_param('angle'))
     while host_api.axis_is_moving(1):
         host_api.sleep_ms(10)
@@ -36,7 +38,7 @@ def main():
     while host_api.get_di(1) != True:
         host_api.sleep_ms(10)
     if host_api.get_param('height') <= 0:
-        host_api.log_message('速度为0，请检查 height 参数')
+        host_api.log_message('Twarn: Vel=0 Check height')
     host_api.axis_move(0, 100.00, host_api.get_param('height'))
     while host_api.axis_is_moving(0):
         host_api.sleep_ms(10)
@@ -56,5 +58,7 @@ def main():
         host_api.sleep_ms(10)
     host_api.log_message('Program Complete.')
 
+
 if __name__ == '__main__':
+    init()
     main()
