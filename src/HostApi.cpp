@@ -133,7 +133,11 @@ void draw_text(float x, float y, const std::string &text, int r, int g, int b) {
   Model().PushDrawCmd({amr::CmdType::TEXT, x, y, 0, 0, 0, col, text});
 }
 void clear_screen() { Model().ClearDrawQueue(); }
-bool is_key_down(const std::string &key) { return Model().GetInputSticky(key); }
+bool is_key_down(std::string key) {
+  // Normalize to uppercase
+  std::transform(key.begin(), key.end(), key.begin(), ::toupper);
+  return Model().GetInputSticky(key);
+}
 std::tuple<float, float> get_mouse_pos() {
   auto p = Model().GetMousePos();
   return std::make_tuple(p.first, p.second);

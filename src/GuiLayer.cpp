@@ -1252,8 +1252,9 @@ void DrawCodeViewer() {
         std::string code_part = line_content.substr(0, comment_pos);
         std::string comm_part = line_content.substr(comment_pos);
 
-        // Render Code Part (White by default, keywords colored?)
-        // TODO: Full tokenizer is overkill, just printing basic for now
+        // Render Code Part leading up to comment
+        // Note: Full specialization for keywords inside this part is skipped
+        // for simplicity.
         ImGui::TextUnformatted(code_part.c_str());
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s",
@@ -1361,8 +1362,8 @@ void DrawTopBar() {
                                     for (int i = 0; i < 8; ++i) { Model().SetDI(i, false);
                                     Model().SetDO(i, false); }                           for (int i = 0; i
                                     < 3; ++i) {                           Model().AxisMove(i, 0, 0);
-                                    Model().SetAxisCurrentPos(i,                           0); }                           Model().SetPaused(false);
-                                    Model().RequestTermination();
+                                    Model().SetAxisCurrentPos(i,                           0); }
+                                    Model().SetPaused(false);                           Model().RequestTermination();
                                   */
         // Let's trigger a soft reset here too to ensure clean slate
         for (int i = 0; i < 8; ++i) {
