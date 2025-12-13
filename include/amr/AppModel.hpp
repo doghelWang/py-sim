@@ -1,5 +1,6 @@
 #pragma once
 
+#include "amr/Hardware.hpp" // IHardware
 #include "amr/Types.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -33,6 +34,8 @@ public:
   void MapInput(int pin, InputAction action, bool invert = false,
                 bool edge_trigger = false);
   void ResetSafetyConfig(); // Clear all input mappings
+  int GetPinForAction(
+      InputAction action) const; // Find pin for action (-1 if none)
 
   // 禁止拷贝
   AppModel(const AppModel &) = delete;
@@ -52,9 +55,9 @@ public:
   void WaitForResume(); // 如果处于暂停状态，阻塞当前线程，直到恢复或终止
 
   // --- 运动控制 (Motion Control) ---
-  void SetAxisTarget(int axis, float pos, float vel); // 设置轴目标位置
-  float GetAxisPos(int axis) const;                   // 获取当前轴位置
-  bool IsAxisMoving(int axis) const;                  // 判断轴是否在运动
+  void AxisMove(int axis, float pos, float vel); // 设置轴目标位置
+  float GetAxisPos(int axis) const;              // 获取当前轴位置
+  bool IsAxisMoving(int axis) const;             // 判断轴是否在运动
 
   // 物理更新逻辑 (在主循环中调用)
   void UpdatePhysics(float dt);
@@ -134,6 +137,9 @@ private:
   AppModel();
   ~AppModel() = default;
 
+  // Hardware Abstraction
+  std::unique_ptr<IHardware> hardware_;
+
   mutable std::mutex mtx_;
   std::condition_variable cv_;
 
@@ -148,9 +154,9 @@ private:
   std::atomic<bool> should_terminate_{false};
 
   // Hardware
-  Axis axes_[3];
-  bool di_[8] = {false};
-  bool do_[8] = {false};
+  // Axis axes_[3]; // Removed
+  // bool di_[8] = {false}; // Removed
+  // bool do_[8] = {false}; // Removed
   float registers_[32] = {0};
 
   // Data

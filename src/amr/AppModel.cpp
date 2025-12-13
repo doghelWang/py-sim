@@ -14,6 +14,9 @@ AppModel &AppModel::Instance() {
 AppModel::AppModel() {
   // Initialize defaults if needed
   last_di_state_.resize(8, false); // Assuming 8 DI pins
+
+  // Default Hardware
+  hardware_ = std::make_unique<SimHardware>();
 }
 
 // --- Safety & Input ---
@@ -37,6 +40,16 @@ void AppModel::ResetSafetyConfig() {
   console_log_ += "[Sys] Safety Config Reset.\n";
 }
 
+int AppModel::GetPinForAction(InputAction action) const {
+  std::lock_guard<std::mutex> lock(mtx_);
+  for (const auto &pair : input_map_) {
+    if (pair.second.action == action) {
+      return pair.first; // Return Pin ID
+    }
+  }
+  return -1; // Not found
+}
+
 void AppModel::UpdateSafetyLogic(float dt) {
   std::lock_guard<std::mutex> lock(mtx_);
 
@@ -49,7 +62,8 @@ void AppModel::UpdateSafetyLogic(float dt) {
       continue;
 
     // Get current raw state
-    bool raw_val = di_[pin];
+    // Get current raw state from Hardware
+    bool raw_val = hardware_->GetDI(pin);
     // Apply inversion
     bool active = cfg.invert ? !raw_val : raw_val;
 
@@ -120,9 +134,8 @@ void AppModel::UpdateSafetyLogic(float dt) {
           // Trigger Homing for all axes (Mock implementation)
           for (int i = 0; i < 3; ++i) {
             // Set target to 0, slow velocity
-            axes_[i].target_pos = 0.0f;
-            axes_[i].max_vel = 5.0f;
-            axes_[i].is_moving = true;
+            // Set target to 0, slow velocity via Hardware
+            hardware_->AxisMove(i, 0.0f, 5.0f);
           }
         }
       }
@@ -167,28 +180,26 @@ void AppModel::WaitForResume() {
   }
 }
 
-// --- Motion Control ---
-void AppModel::SetAxisTarget(int axis, float pos, float vel) {
+// --- Axis Control ---
+void AppModel::AxisMove(int axis, float pos, float vel) {
   if (axis < 0 || axis >= 3)
     return;
   std::lock_guard<std::mutex> lock(mtx_);
-  axes_[axis].target_pos = pos;
-  axes_[axis].max_vel = vel;
-  axes_[axis].is_moving = true;
+  hardware_->AxisMove(axis, pos, vel);
 }
 
 float AppModel::GetAxisPos(int axis) const {
   if (axis < 0 || axis >= 3)
     return 0.0f;
   std::lock_guard<std::mutex> lock(mtx_);
-  return axes_[axis].current_pos;
+  return hardware_->GetAxisPos(axis);
 }
 
 bool AppModel::IsAxisMoving(int axis) const {
   if (axis < 0 || axis >= 3)
     return false;
   std::lock_guard<std::mutex> lock(mtx_);
-  return axes_[axis].is_moving;
+  return hardware_->IsAxisMoving(axis);
 }
 
 // --- Physics ---
@@ -199,20 +210,8 @@ void AppModel::UpdatePhysics(float dt) {
   if (is_paused_)
     return;
 
-  for (int i = 0; i < 3; ++i) {
-    if (axes_[i].is_moving) {
-      float diff = axes_[i].target_pos - axes_[i].current_pos;
-      float step = axes_[i].max_vel * dt;
-      if (step < 0.0001f)
-        step = 0.0001f;
-
-      if (std::abs(diff) <= step) {
-        axes_[i].current_pos = axes_[i].target_pos;
-        axes_[i].is_moving = false;
-      } else {
-        axes_[i].current_pos += (diff > 0 ? step : -step);
-      }
-    }
+  if (hardware_) {
+    hardware_->Update(dt);
   }
 
   // Particles
@@ -230,28 +229,34 @@ void AppModel::SetDO(int port, bool val) {
   if (port < 0 || port >= 8)
     return;
   std::lock_guard<std::mutex> lock(mtx_);
-  do_[port] = val;
+  hardware_->SetDO(port, val);
 }
 
 bool AppModel::GetDO(int port) const {
   if (port < 0 || port >= 8)
     return false;
   std::lock_guard<std::mutex> lock(mtx_);
-  return do_[port];
+  return hardware_->GetDO(port);
 }
 
 bool AppModel::GetDI(int port) const {
   if (port < 0 || port >= 8)
     return false;
   std::lock_guard<std::mutex> lock(mtx_);
-  return di_[port];
+  return hardware_->GetDI(port);
 }
 
 void AppModel::SetDI(int port, bool val) {
   if (port < 0 || port >= 8)
     return;
   std::lock_guard<std::mutex> lock(mtx_);
-  di_[port] = val;
+  hardware_->SetDI(port, val);
+
+  // Log it to console for debugging
+  console_log_ += "[Hw] SetDI(" + std::to_string(port) +
+                  ") = " + (val ? "HIGH" : "LOW") + "\n";
+  std::cout << "[Hw] SetDI(" << port << ") = " << (val ? "HIGH" : "LOW")
+            << std::endl;
 }
 
 // --- Registers ---
@@ -460,9 +465,7 @@ void AppModel::ReduceShakeTimer(float dt) {
 void AppModel::SetAxisCurrentPos(int axis, float pos) {
   if (axis >= 0 && axis < 3) {
     std::lock_guard<std::mutex> lock(mtx_);
-    axes_[axis].current_pos = pos;
-    axes_[axis].target_pos = pos;
-    axes_[axis].is_moving = false;
+    hardware_->SetAxisData(axis, pos);
   }
 }
 

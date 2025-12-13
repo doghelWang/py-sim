@@ -5,7 +5,7 @@
 void ResetApp(amr::AppModel &app) {
   app.SetPaused(false);
   for (int i = 0; i < 3; ++i) {
-    app.SetAxisTarget(i, 0.0f, 0.0f);
+    app.AxisMove(i, 0.0f, 0.0f);
     app.SetAxisCurrentPos(i, 0.0f);
   }
 }
@@ -26,7 +26,7 @@ TEST(AppModelTest, AxisMovement) {
   EXPECT_FALSE(app.IsAxisMoving(0));
 
   // Move
-  app.SetAxisTarget(0, 100.0f, 10.0f);
+  app.AxisMove(0, 100.0f, 10.0f);
   EXPECT_TRUE(app.IsAxisMoving(0));
 
   // Physics Update (1 sec at 10 u/s -> +10)
@@ -53,7 +53,7 @@ TEST(AppModelTest, PausePreventsMotion) {
   amr::AppModel &app = amr::AppModel::Instance();
   ResetApp(app);
 
-  app.SetAxisTarget(0, 100.0f, 10.0f);
+  app.AxisMove(0, 100.0f, 10.0f);
   app.SetPaused(true);
 
   EXPECT_TRUE(app.IsPaused());
@@ -120,7 +120,7 @@ TEST(AppModelTest, SafetyConfigTest) {
   app.MapInput(6, amr::AppModel::InputAction::ESTOP, false, false);
 
   // Start Axis Moving
-  app.SetAxisTarget(0, 100.0f, 10.0f);
+  app.AxisMove(0, 100.0f, 10.0f);
   app.UpdatePhysics(0.1f); // Move a bit
   EXPECT_TRUE(app.IsAxisMoving(0));
   EXPECT_FALSE(app.IsPaused());

@@ -40,6 +40,60 @@ struct ApiDoc {
   std::string example;
 };
 
+// ---------------------------------------------------------
+// RPi 5 Hardware Defs
+// ---------------------------------------------------------
+struct RPiPin {
+  int phys_pin;      // Physical Pin 1-40
+  std::string name;  // "GPIO 17", "3V3", "GND"
+  int gpio_id;       // -1 if Power/GND
+  int amr_di_idx;    // -1 if not mapped, 0-7 otherwise
+  int amr_do_idx;    // -1 if not mapped, 0-7 otherwise
+  ImVec2 socket_pos; // Canvas position
+};
+
+// Helper: Populate RPi Pins
+std::vector<RPiPin> GetRPiPins() {
+  std::vector<RPiPin> pins(40);
+  // Simple fill for demo - Only key pins fully defined for brevity
+  // Standard 40 pin layout
+  // 3V3, 5V, GPIOs...
+  // We will customize specific pins for our demo
+  for (int i = 0; i < 40; ++i) {
+    pins[i].phys_pin = i + 1;
+    pins[i].gpio_id = -1;
+    pins[i].amr_di_idx = -1;
+    pins[i].amr_do_idx = -1;
+    pins[i].name = "Pin " + std::to_string(i + 1);
+  }
+
+  // Power
+  pins[0].name = "3V3";
+  pins[1].name = "5V";
+  pins[5].name = "GND";
+  pins[38].name = "GND";
+
+  // Mappings per design
+  // DI 6 (E-Stop) -> Pin 38? Wait, Pin 38 is typically GPIO 20 (Physical 38).
+  // Let's use standard layout:
+  // Pin 38 = GPIO 20.
+  pins[37].name = "GPIO 20";
+  pins[37].gpio_id = 20;
+  pins[37].amr_di_idx = 6; // Index 37 is Pin 38
+
+  // DI 7 (Home) -> Pin 40 = GPIO 21
+  pins[39].name = "GPIO 21";
+  pins[39].gpio_id = 21;
+  pins[39].amr_di_idx = 7;
+
+  // Simple LED Out -> Pin 11 = GPIO 17 (DO 0)
+  pins[10].name = "GPIO 17";
+  pins[10].gpio_id = 17;
+  pins[10].amr_do_idx = 0;
+
+  return pins;
+}
+
 const std::vector<ApiDoc> api_docs = {
     {"log_message", "log_message(msg)", "Log to System Log.",
      "host_api.log_message('Hi')"},
@@ -332,8 +386,141 @@ void GenerateScript() {
 // UI: Hardware Config Tab
 // ---------------------------------------------------------
 // ---------------------------------------------------------
-// UI: Hardware Config Tab
+// Draw RPi 5 Visualizer
 // ---------------------------------------------------------
+void DrawRPiVisualizer() {
+  ImGui::BeginChild("RPiView", ImVec2(0, 300), true);
+  ImDrawList *dl = ImGui::GetWindowDrawList();
+  ImVec2 p = ImGui::GetCursorScreenPos();
+
+  // 1. Draw PCB (Green Board)
+  // Approx 300x150
+  float board_w = 400.0f;
+  float board_h = 200.0f;
+  ImVec2 pcb_min = ImVec2(p.x + 20, p.y + 20);
+  ImVec2 pcb_max = ImVec2(pcb_min.x + board_w, pcb_min.y + board_h);
+
+  dl->AddRectFilled(pcb_min, pcb_max, IM_COL32(40, 160, 60, 255),
+                    10.0f); // Green PCB
+  dl->AddRect(pcb_min, pcb_max, IM_COL32(30, 100, 40, 255), 10.0f, 0,
+              3.0f); // Border
+  dl->AddText(ImVec2(pcb_min.x + 150, pcb_min.y + 80),
+              IM_COL32(200, 255, 200, 100), "Raspberry Pi 5");
+
+  // 2. Draw 40-Pin Header
+  // 2 Rows, 20 Cols. Top Right of board.
+  ImVec2 header_start = ImVec2(pcb_max.x - 220, pcb_min.y + 20);
+  float pin_spacing = 10.0f;
+
+  static auto pin_defs = GetRPiPins(); // Static to load once
+
+  for (int i = 0; i < 40; ++i) {
+    int row = (i % 2); // 0 = Odd (Top), 1 = Even (Bottom) - Wait, standard:
+    // Pin 1, 2
+    // Pin 3, 4
+    // So Row 0 is Pin 1,3,5 (Index 0, 2, 4). Row 1 is Pin 2,4,6 (Index 1, 3,
+    // 5).
+    row = (i % 2);
+    int col = (i / 2);
+
+    float cx = header_start.x + col * pin_spacing;
+    float cy = header_start.y + row * pin_spacing;
+
+    ImU32 color = IM_COL32(200, 180, 100, 255); // Gold
+
+    // Visualize State
+    if (pin_defs[i].amr_di_idx != -1) {
+      if (Model().GetDI(pin_defs[i].amr_di_idx))
+        color = IM_COL32(255, 50, 50, 255); // Red if Active Input
+    }
+    if (pin_defs[i].amr_do_idx != -1) {
+      if (Model().GetDO(pin_defs[i].amr_do_idx))
+        color = IM_COL32(50, 255, 50, 255); // Green if Active Output
+    }
+
+    dl->AddCircleFilled(ImVec2(cx, cy), 3.0f, color);
+
+    pin_defs[i].socket_pos = ImVec2(cx, cy); // Store for wire drawing
+  }
+
+  // 3. Components & Wiring
+  // E-Stop Button component
+  ImVec2 comp_estop_pos = ImVec2(p.x + 450, p.y + 50);
+  dl->AddRectFilled(comp_estop_pos,
+                    ImVec2(comp_estop_pos.x + 80, comp_estop_pos.y + 80),
+                    IM_COL32(50, 50, 60, 255), 5.0f);
+  dl->AddText(ImVec2(comp_estop_pos.x + 10, comp_estop_pos.y + 5),
+              IM_COL32(255, 255, 255, 255), "E-STOP");
+
+  // Interactive Button
+  ImGui::SetCursorScreenPos(
+      ImVec2(comp_estop_pos.x + 20, comp_estop_pos.y + 30));
+
+  // Dynamic Pin Mapping for ESTOP
+  int estop_pin = Model().GetPinForAction(amr::AppModel::InputAction::ESTOP);
+  bool estop_active = (estop_pin != -1) && Model().GetDI(estop_pin);
+
+  // Custom button style for E-Stop (Red mushroom)
+  ImGui::PushStyleColor(ImGuiCol_Button, estop_active
+                                             ? ImVec4(1.0, 0.2, 0.2, 1.0)
+                                             : ImVec4(0.6, 0.1, 0.1, 1.0));
+  if (ImGui::Button("PANIC", ImVec2(40, 40))) {
+    if (estop_pin != -1)
+      Model().SetDI(estop_pin, !estop_active);
+    else
+      Model().LogMessage("[Gui] No E-STOP Pin Configured!");
+  }
+  ImGui::PopStyleColor();
+
+  // Wire: E-Stop (Comp) -> Pin (RPi)
+  if (estop_pin != -1) {
+    // Find RPi Pin index for this AMR DI
+    // Scan pin_defs for amr_di_idx == estop_pin
+    for (int i = 0; i < 40; ++i) {
+      if (pin_defs[i].amr_di_idx == estop_pin) {
+        ImVec2 p1 = pin_defs[i].socket_pos;
+        ImVec2 p2 = ImVec2(comp_estop_pos.x, comp_estop_pos.y + 40);
+        dl->AddBezierCubic(p1, ImVec2(p1.x + 30, p1.y), ImVec2(p2.x - 30, p2.y),
+                           p2, IM_COL32(200, 50, 50, 255), 2.0f);
+        break;
+      }
+    }
+  }
+
+  // Home Button
+  ImVec2 comp_home_pos = ImVec2(p.x + 450, p.y + 150);
+  dl->AddRectFilled(comp_home_pos,
+                    ImVec2(comp_home_pos.x + 80, comp_home_pos.y + 60),
+                    IM_COL32(50, 50, 60, 255), 5.0f);
+  ImGui::SetCursorScreenPos(ImVec2(comp_home_pos.x + 10, comp_home_pos.y + 10));
+
+  // Dynamic Pin Mapping for HOME
+  int home_pin = Model().GetPinForAction(amr::AppModel::InputAction::HOME_ALL);
+  bool home_state = (home_pin != -1) && Model().GetDI(home_pin);
+
+  if (ImGui::Button("HOME", ImVec2(60, 40))) {
+    if (home_pin != -1)
+      Model().SetDI(home_pin, !home_state); // Toggle usually
+    else
+      Model().LogMessage("[Gui] No HOME Pin Configured!");
+  }
+
+  // Wire: Home -> Pin
+  if (home_pin != -1) {
+    for (int i = 0; i < 40; ++i) {
+      if (pin_defs[i].amr_di_idx == home_pin) {
+        ImVec2 p1 = pin_defs[i].socket_pos;
+        ImVec2 p2 = ImVec2(comp_home_pos.x, comp_home_pos.y + 30);
+        dl->AddBezierCubic(p1, ImVec2(p1.x + 30, p1.y), ImVec2(p2.x - 30, p2.y),
+                           p2, IM_COL32(100, 100, 255, 255), 2.0f);
+        break;
+      }
+    }
+  }
+
+  ImGui::EndChild();
+}
+
 void DrawHardwareConfig() {
   ImGui::Text("AMR HARDWARE CONFIGURATION");
 
@@ -480,6 +667,7 @@ void LoadProject() {
   }
 
   // Clear Model
+  Model().ResetSafetyConfig(); // Reset Inputs
   Model().GetMechanisms().clear();
   Model().GetGlobalParams().clear();
   Model().GetBlocks().clear();
@@ -1007,7 +1195,9 @@ void DrawIOPanel() {
   ImGui::Columns(4, "DOCols", false);
   for (int i = 0; i < 8; ++i) {
     bool v = Model().GetDO(i);
-    ImGui::Text("DO-%d:", i);
+    if (ImGui::Checkbox(("DO-" + std::to_string(i)).c_str(), &v)) {
+      Model().SetDO(i, v); // Manual override
+    }
     ImGui::SameLine();
     if (v)
       ImGui::TextColored(ImVec4(0, 1, 0, 1), "[ON]");
@@ -1030,6 +1220,85 @@ void DrawIOPanel() {
   ImGui::EndChild();
 }
 
+// ---------------------------------------------------------
+// Helper: Draw Code Viewer (Syntax Highlighting)
+// ---------------------------------------------------------
+void DrawCodeViewer() {
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.1f, 0.1f, 0.12f, 1.0f));
+  ImGui::BeginChild("CodeViewInd", ImVec2(0, 0), true);
+
+  auto lines = Model().GetSourceLines();
+  bool running = Model().IsRunning();
+  int cur_line = Model().GetCurrentLine();
+
+  for (int i = 0; i < lines.size(); i++) {
+    int line_num = i + 1;
+    const std::string &line_content = lines[i];
+
+    // Highlighting Logic
+    if (running && line_num == cur_line) {
+      // Active Line Highlight
+      ImGui::TextColored(ImVec4(1, 1, 0, 1), "> %03d: %s", line_num,
+                         line_content.c_str());
+    } else {
+      ImGui::TextDisabled("  %03d: ", line_num);
+      ImGui::SameLine();
+
+      // Simple Syntax Highlighting (Primitive)
+      // 1. Check for Comment
+      size_t comment_pos = line_content.find('#');
+      if (comment_pos != std::string::npos) {
+        // Split: Code | Comment
+        std::string code_part = line_content.substr(0, comment_pos);
+        std::string comm_part = line_content.substr(comment_pos);
+
+        // Render Code Part (White by default, keywords colored?)
+        // TODO: Full tokenizer is overkill, just printing basic for now
+        ImGui::TextUnformatted(code_part.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 0.4f, 1.0f), "%s",
+                           comm_part.c_str());
+      } else {
+        // Check for keywords start
+        bool is_keyword = false;
+        for (const auto &k : keywords) {
+          // Check if line starts with keyword (ignoring whitespace)
+          size_t start = line_content.find_first_not_of(" \t");
+          if (start != std::string::npos) {
+            if (line_content.compare(start, k.size(), k) == 0) {
+              is_keyword = true;
+              break;
+            }
+          }
+        }
+
+        if (is_keyword)
+          ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s",
+                             line_content.c_str());
+        else
+          ImGui::TextUnformatted(line_content.c_str());
+      }
+    }
+  }
+  ImGui::EndChild();
+  ImGui::PopStyleColor();
+}
+
+// ---------------------------------------------------------
+// Helper: Draw Log Viewer
+// ---------------------------------------------------------
+void DrawLogViewer() {
+  ImGui::Text("System Log");
+  ImGui::BeginChild("LogRegion", ImVec2(0, 0), true);
+  {
+    std::string log = Model().GetLog();
+    ImGui::TextWrapped("%s", log.c_str());
+    if (log.size() > 0)
+      ImGui::SetScrollHereY(1.0f);
+  }
+  ImGui::EndChild();
+}
+
 void DrawTopBar() {
   ImGui::BeginChild("TopBar", ImVec2(0, 50), true);
 
@@ -1040,7 +1309,78 @@ void DrawTopBar() {
   ImGui::Text(" | Status: %s", Model().IsRunning()
                                    ? (Model().IsPaused() ? "PAUSED" : "RUNNING")
                                    : "STOPPED");
+
   ImGui::SameLine(300);
+
+  // Script Selector
+  static std::vector<std::string> scripts = ScanScripts();
+  static int current_script_idx = -1;
+  const std::string &current_path = Model().GetScriptPath();
+
+  // Try to match current path to list if not set
+  if (current_script_idx == -1 && !scripts.empty()) {
+    for (int i = 0; i < scripts.size(); ++i) {
+      if (scripts[i] == current_path) {
+        current_script_idx = i;
+        break;
+      }
+    }
+    // If still -1 and not empty, default to 0? Or keep current?
+    // If current_path is valid but not in list (e.g. absolute vs relative),
+    // might fail match. ScanScripts returns full paths or relative? It returns
+    // entry.path().string().
+  }
+
+  // ComboBox
+  // Extract filenames for display
+  std::string combo_preview_value = "Select Script...";
+  if (current_script_idx >= 0 && current_script_idx < scripts.size()) {
+    // Just show filename
+    std::filesystem::path p(scripts[current_script_idx]);
+    combo_preview_value = p.filename().string();
+  } else if (!current_path.empty()) {
+    std::filesystem::path p(current_path);
+    combo_preview_value = p.filename().string();
+  }
+
+  ImGui::SetNextItemWidth(200);
+  if (ImGui::BeginCombo("##ScriptSelector", combo_preview_value.c_str())) {
+    for (int n = 0; n < scripts.size(); n++) {
+      const bool is_selected = (current_script_idx == n);
+      std::filesystem::path p(scripts[n]);
+      if (ImGui::Selectable(p.filename().string().c_str(), is_selected)) {
+        current_script_idx = n;
+        Model().SetScriptPath(scripts[n]);
+        LoadScriptContent();
+        // Auto-reset system on script switch?
+        // User said: "simulation area will initialize according to script"
+        // Maybe we should clear the canvas at least.
+        Model().ClearDrawQueue(); // Assuming this exists or similar
+                                  // Actually, Reset System button does this:
+                                  /*
+                                    for (int i = 0; i < 8; ++i) { Model().SetDI(i, false);
+                                    Model().SetDO(i, false); }                           for (int i = 0; i
+                                    < 3; ++i) {                           Model().AxisMove(i, 0, 0);
+                                    Model().SetAxisCurrentPos(i,                           0); }                           Model().SetPaused(false);
+                                    Model().RequestTermination();
+                                  */
+        // Let's trigger a soft reset here too to ensure clean slate
+        for (int i = 0; i < 8; ++i) {
+          Model().SetDI(i, false);
+          Model().SetDO(i, false);
+        }
+        for (int i = 0; i < 3; ++i) {
+          Model().AxisMove(i, 0, 0);
+          Model().SetAxisCurrentPos(i, 0);
+        }
+      }
+      if (is_selected)
+        ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+
+  ImGui::SameLine(); // Spacer for Controls
 
   // Controls
   if (!Model().IsRunning()) {
@@ -1075,7 +1415,7 @@ void DrawTopBar() {
       Model().SetDO(i, false);
     }
     for (int i = 0; i < 3; ++i) {
-      Model().SetAxisTarget(i, 0, 0);
+      Model().AxisMove(i, 0, 0);
       Model().SetAxisCurrentPos(i, 0); // Force position to 0
     }
     Model().SetPaused(false);
@@ -1137,6 +1477,25 @@ void GuiLayer::Render(void *w) {
   ImGui::Begin("AMR Controller Studio", nullptr,
                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize);
 
+  // --- Input Forwarding (Fix for Game Script) ---
+  ImGuiIO &io = ImGui::GetIO();
+  // Transform mouse pos to Canvas relative?
+  // Game script likely expects canvas-relative coordinates if interacting with
+  // game elements. But AppModel stores raw mouse pos. Let's store
+  // window-relative or screen-relative? Usually ImGui io.MousePos is
+  // screen/window relative depending on context. Let's store raw IO mouse pos,
+  // script can offset if needed. Actually, better to store relative to Canvas
+  // if possible, but global is safer for now.
+  Model().SetMousePos(io.MousePos.x, io.MousePos.y);
+  Model().SetMouseDown(0, io.MouseDown[0]);
+  Model().SetMouseDown(1, io.MouseDown[1]);
+  // Forward Keys if needed, e.g. Arrows for game
+  Model().SetInputSticky("LEFT", io.KeysDown[ImGuiKey_LeftArrow]);
+  Model().SetInputSticky("RIGHT", io.KeysDown[ImGuiKey_RightArrow]);
+  Model().SetInputSticky("UP", io.KeysDown[ImGuiKey_UpArrow]);
+  Model().SetInputSticky("DOWN", io.KeysDown[ImGuiKey_DownArrow]);
+  Model().SetInputSticky("SPACE", io.KeysDown[ImGuiKey_Space]);
+
   // Physics Simulation Loop (Required for Motion)
   {
     float dt = 1.0f / 60.0f; // Approx 60hz
@@ -1146,56 +1505,62 @@ void GuiLayer::Render(void *w) {
   // 1. Top Bar
   DrawTopBar();
 
-  // 2. 主内容区域 (Main Content Area)
+  // 2. Main Layout (Dock-like)
+  ImGui::Columns(1);
+
   if (ImGui::BeginTabBar("MainTabs")) {
+    // TAB: SIMULATION
+    if (ImGui::BeginTabItem("Simulation & RPi")) {
 
-    // 选项卡：监控与控制 (Monitor & Control)
-    if (ImGui::BeginTabItem("Monitor")) {
-      ImGui::Columns(2, "MonitorCols");
+      // --- Grid System for Layout ---
+      // Row 1: Hardware | Motion
+      // Height ~320px
+      ImGui::BeginChild("Row1", ImVec2(0, 320), false);
+      ImGui::Columns(2, "Row1Cols", false); // Resizable?
+      ImGui::SetColumnWidth(0, 600);        // Give RPi enough width
 
-      // 左侧：仿真画布 (Simulation Canvas)
-      ImGui::BeginChild("SimView", ImVec2(0, 400), true);
-      DrawCanvas();
-      ImGui::EndChild();
-
-      // 左下：IO 面板 (IO Panel)
-      DrawIOPanel();
+      // Col 1: RPi
+      DrawRPiVisualizer();
 
       ImGui::NextColumn();
 
-      // 右侧：源代码查看器 (Source Code Viewer)
-      ImGui::Text("Active Script: %s", Model().GetScriptPath().c_str());
-      ImGui::BeginChild("CodeViewInd", ImVec2(0, 400), true);
-      {
-        auto lines = Model().GetSourceLines();
-        bool running = Model().IsRunning();
-        int cur_line = Model().GetCurrentLine();
-
-        for (int i = 0; i < lines.size(); i++) {
-          int line_num = i + 1;
-          const std::string &line_content = lines[i];
-          if (running && line_num == cur_line) {
-            ImGui::TextColored(ImVec4(1, 1, 0, 1), "> %03d: %s", line_num,
-                               line_content.c_str());
-          } else {
-            ImGui::Text("  %03d: %s", line_num, line_content.c_str());
-          }
-        }
-      }
-      ImGui::EndChild();
-
-      // Right Bottom: Logs
-      ImGui::Text("System Log");
-      ImGui::BeginChild("LogRegion", ImVec2(0, 0), true);
-      {
-        std::string log = Model().GetLog();
-        ImGui::TextWrapped("%s", log.c_str());
-        if (log.size() > 0)
-          ImGui::SetScrollHereY(1.0f);
-      }
+      // Col 2: Canvas
+      // Force it to fill available height in Row1
+      ImGui::BeginChild("CanvasRegion", ImVec2(0, 0), true);
+      DrawCanvas();
       ImGui::EndChild();
 
       ImGui::Columns(1);
+      ImGui::EndChild(); // End Row 1
+
+      ImGui::Separator();
+
+      // Row 2: Control | Code
+      // Height: Fill remaining minus Log? Or separate?
+      // Let's use ~350px
+      ImGui::BeginChild("Row2", ImVec2(0, 350), false);
+      ImGui::Columns(2, "Row2Cols", true);
+
+      // Col 1: Manual IO
+      if (ImGui::CollapsingHeader("Manual IO & Registers",
+                                  ImGuiTreeNodeFlags_DefaultOpen)) {
+        DrawIOPanel();
+      }
+
+      ImGui::NextColumn();
+
+      // Col 2: Code Viewer
+      ImGui::Text("Active Script: %s", Model().GetScriptPath().c_str());
+      DrawCodeViewer();
+
+      ImGui::Columns(1);
+      ImGui::EndChild(); // End Row 2
+
+      ImGui::Separator();
+
+      // Row 3: Logs (Remaining)
+      DrawLogViewer();
+
       ImGui::EndTabItem();
     }
 

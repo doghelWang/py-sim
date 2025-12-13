@@ -23,8 +23,8 @@ except ImportError:
 def init():
     host_api.log_message('[Sys] Initializing Safety Config...')
     # Clear previous safety (Important if script is re-run logic, though AppModel has ResetSafetyConfig)
-    host_api.configure_input(6, 1, False, False)
-    host_api.configure_input(7, 3, False, True)
+    host_api.configure_input(3, 1, False, False)
+    host_api.configure_input(4, 3, False, True)
     host_api.log_message('[Sys] Safety Configured.')
 
 def main():
@@ -34,8 +34,8 @@ def main():
     host_api.axis_move(1, 90.00, host_api.get_param('angle'))
     while host_api.axis_is_moving(1):
         host_api.sleep_ms(10)
-    host_api.log_message('[AMR] Waiting for DI 1...')
-    while host_api.get_di(1) != True:
+    host_api.log_message('[AMR] Waiting for DI 5...')
+    while host_api.get_di(5) != True:
         host_api.sleep_ms(10)
     if host_api.get_param('height') <= 0:
         host_api.log_message('Twarn: Vel=0 Check height')
@@ -43,15 +43,15 @@ def main():
     while host_api.axis_is_moving(0):
         host_api.sleep_ms(10)
     host_api.set_do(1, True)
-    host_api.log_message('[AMR] Waiting for DI 2...')
-    while host_api.get_di(2) != True:
+    host_api.log_message('[AMR] Waiting for DI 6...')
+    while host_api.get_di(6) != True:
         host_api.sleep_ms(10)
     host_api.axis_move(1, 0.00, 2.00)
     while host_api.axis_is_moving(1):
         host_api.sleep_ms(10)
     host_api.set_do(2, True)
-    host_api.log_message('[AMR] Waiting for DI 5...')
-    while host_api.get_di(5) != True:
+    host_api.log_message('[AMR] Waiting for DI 7...')
+    while host_api.get_di(7) != True:
         host_api.sleep_ms(10)
     host_api.axis_move(0, 0.00, 2.00)
     while host_api.axis_is_moving(0):

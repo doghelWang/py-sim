@@ -153,7 +153,7 @@ void axis_move(int axis, float pos, float vel) {
         "[Error] axis_move: 速度为0，请检查参数! Motion ignored.\n");
     return;
   }
-  Model().SetAxisTarget(axis, pos, vel);
+  Model().AxisMove(axis, pos, vel);
 }
 
 float axis_get_pos(int axis) { return Model().GetAxisPos(axis); }
@@ -252,8 +252,8 @@ PYBIND11_EMBEDDED_MODULE(host_api, m) {
     }
     // Zero Axes
     for (int i = 0; i < 3; ++i) {
-      Model().SetAxisTarget(i, 0,
-                            0);        // Set target to 0, velocity 0 to stop
+      Model().AxisMove(i, 0,
+                       0);             // Set target to 0, velocity 0 to stop
       Model().SetAxisCurrentPos(i, 0); // Reset current position
     }
     // Resume if paused
