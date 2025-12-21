@@ -3,6 +3,7 @@
 #endif
 
 #include "amr/AppModel.hpp"
+#include "amr/SimulatorCore.hpp"
 #include "httplib.h"
 #include <array>
 #include <chrono>
@@ -149,6 +150,12 @@ void spawn_particles(float x, float y, int count, int r, int g, int b) {
 }
 void screen_shake(float i) { Model().SetShakeTimer(i); }
 
+// --- Environment API ---
+void add_obstacle(float x, float y, float w, float h) {
+  SimulatorCore::Instance().AddObstacle(x, y, w, h);
+}
+void reset_obstacles() { SimulatorCore::Instance().ResetObstacles(); }
+
 // --- Motion Control API ---
 
 void axis_move(int axis, float pos, float vel) {
@@ -186,9 +193,9 @@ void set_paused(bool paused) {
 }
 
 void configure_input(int pin, int action, bool invert, bool edge) {
-  // Cast int action to InputAction enum
   Model().MapInput(pin, (InputAction)action, invert, edge);
 }
+void set_twist(float vx, float vy, float wz) { Model().SetTwist(vx, vy, wz); }
 
 // Module
 PYBIND11_EMBEDDED_MODULE(host_api, m) {
@@ -231,14 +238,22 @@ PYBIND11_EMBEDDED_MODULE(host_api, m) {
 
   // AMR Config
   m.def("get_param", &get_param, "Get Global Param value by Name");
+  m.def("set_twist", &set_twist, "Set AGV Chassis velocity (omni)");
 
   // System Control
   m.def("set_paused", &set_paused, "Pause/Resume System");
+  m.def(
+      "should_terminate", []() { return Model().ShouldTerminate(); },
+      "Check if script should stop");
 
   // Safety Config
   m.def("configure_input", &configure_input,
         "Configure DI Pin: pin, action(0=None,1=EStop,2=PauseTog,3=Home), "
         "invert, edge");
+
+  // Environment
+  m.def("add_obstacle", &add_obstacle, "Add a rectangular obstacle to sim");
+  m.def("reset_obstacles", &reset_obstacles, "Clear all obstacles from sim");
 
   // Hardcoded Logic for Demo
   m.def("check_safety", []() {

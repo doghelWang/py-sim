@@ -1,10 +1,15 @@
 #pragma once
 
 #include "amr/Types.hpp"
+#include "amr/VehicleTypes.hpp"
 #include <mutex>
 #include <vector>
 
 namespace amr {
+
+struct Rect {
+  float x, y, w, h;
+};
 
 class SimulatorCore {
 public:
@@ -12,7 +17,20 @@ public:
 
   void Update(float dt);
 
-  // Visuals
+  // --- World Engine (Physics & Kinematics) ---
+  void UpdateChassis(const Twist &cmd, float dt);
+  Odometry GetOdometry() const;
+  void ResetOdometry();
+  void ResetObstacles();
+
+  // --- Sensor Simulation ---
+  LidarScan RayCast(const Odometry &pose) const;
+
+  // --- Map Engine ---
+  void AddObstacle(float x, float y, float w, float h);
+  const std::vector<Rect> &GetObstacles() const;
+
+  // --- Visuals (Legacy Support) ---
   void PushDrawCmd(const DrawCmd &cmd);
   void ClearDrawQueue();
   std::vector<DrawCmd> GetDrawQueue() const;
@@ -29,10 +47,18 @@ private:
   SimulatorCore();
   ~SimulatorCore();
 
-  std::mutex mtx_;
+  mutable std::mutex mtx_;
+
+  // Visuals
   std::vector<DrawCmd> draw_queue_;
   std::vector<Particle> particles_;
   float shake_timer_ = 0.0f;
+
+  // Physics State
+  Odometry odom_; // Robot true pose in world
+
+  // Map Data
+  std::vector<Rect> obstacles_;
 };
 
 } // namespace amr

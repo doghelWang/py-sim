@@ -14,7 +14,7 @@ AmrController::AmrController() {
   hardware_ = std::make_unique<SimHardware>();
 
   // Resize DI state
-  last_di_state_.resize(8, false);
+  last_di_state_.resize(32, false);
 }
 
 AmrController::~AmrController() {}
@@ -40,7 +40,7 @@ void AmrController::Update(float dt) {
     int pin = pair.first;
     const auto &cfg = pair.second;
 
-    if (pin < 0 || pin >= 8)
+    if (pin < 0 || pin >= 32)
       continue;
 
     bool raw_val = hardware_->GetDI(pin);
@@ -124,6 +124,13 @@ void AmrController::ResetSafety() {
   input_map_.clear();
   estop_active_ = false;
   Log("[Sys] Safety Config Reset.\n");
+}
+
+void AmrController::ClearSafety() {
+  std::lock_guard<std::mutex> lock(mtx_);
+  estop_active_ = false;
+  is_paused_ = false;
+  Log("[Sys] Safety Cleared manually.\n");
 }
 
 int AmrController::GetPinForAction(InputAction action) const {

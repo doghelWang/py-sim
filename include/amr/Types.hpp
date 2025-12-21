@@ -1,11 +1,13 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
 namespace amr {
 
 enum class CmdType { RECT, CIRCLE, TEXT, CLEAR };
+enum class AgvType { BASIC, FORKER, CTU };
 
 struct DrawCmd {
   CmdType type;
@@ -42,7 +44,17 @@ enum class BlockType {
   LOOP_START,
   LOOP_END,
   LOG_MSG,
-  CONFIG_SAFETY // New Block Type for Safety Config
+  CONFIG_SAFETY,
+  SPAWN_OBSTACLE,
+  RESET_ENV,
+  AGV_MOVE_VEL,
+  GAME_SPAWN_PARTICLES,
+  GAME_SHAKE,
+  GAME_DRAW_TEXT,
+  MOVE,
+  DELAY,
+  AXIS_MOVE,
+  MSG
 };
 
 // Input Actions for Safety Config (Match AppModel/AmrController)
@@ -66,6 +78,10 @@ struct VisualBlock {
   std::string str_param;
   float pos_x = 0.0f;
   float pos_y = 0.0f;
+
+  // Script Parser additions
+  std::map<std::string, float> params;
+  std::string message;
 };
 
 struct Mechanism {

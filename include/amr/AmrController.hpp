@@ -21,6 +21,7 @@ public:
 
   void ConfigureSafety(int pin, int action, bool invert, bool edge);
   void ResetSafety();
+  void ClearSafety();
   int GetPinForAction(InputAction action) const;
 
   // Motion API
@@ -34,6 +35,9 @@ public:
   bool GetDO(int port) const;
   bool GetDI(int port) const;
   void SetDI(int port, bool val); // For simulation injection
+
+  // Hardware Access
+  class IHardware *Hardware() const { return hardware_.get(); }
 
   // Registers & Params
   void SetReg(int id, float val);

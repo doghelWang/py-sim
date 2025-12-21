@@ -80,6 +80,9 @@ target_include_directories(amr_core PUBLIC include)
 add_executable(demo_gui 
     src/main.cpp 
     src/GuiLayer.cpp
+    src/gui/SimulatorView.cpp
+    src/gui/HardwareView.cpp
+    src/gui/EditorView.cpp
     src/HostApi.cpp 
     src/PythonEngine.cpp
     ${IMGUI_DIR}/imgui.cpp
