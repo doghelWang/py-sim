@@ -6,7 +6,6 @@ sys.path.append(os.getcwd() + '/../src')
 try:
     import host_api
 except ImportError:
-    # Mock for testing
     class HostApi:
         def log_message(self, msg): print(msg)
         def axis_move(self, a, p, v): print(f'Move {a} {p} {v}')
@@ -22,42 +21,11 @@ except ImportError:
 
 def init():
     host_api.log_message('[Sys] Initializing Safety Config...')
-    # Clear previous safety (Important if script is re-run logic, though AppModel has ResetSafetyConfig)
-    host_api.configure_input(3, 1, False, False)
-    host_api.configure_input(4, 3, False, True)
     host_api.log_message('[Sys] Safety Configured.')
 
 def main():
     host_api.log_message('Starting AMR Logic...')
-    if host_api.get_param('angle') <= 0:
-        host_api.log_message('Twarn: Vel=0 Check angle')
-    host_api.axis_move(1, 90.00, host_api.get_param('angle'))
-    while host_api.axis_is_moving(1):
-        host_api.sleep_ms(10)
-    host_api.log_message('[AMR] Waiting for DI 5...')
-    while host_api.get_di(5) != True:
-        host_api.sleep_ms(10)
-    if host_api.get_param('height') <= 0:
-        host_api.log_message('Twarn: Vel=0 Check height')
-    host_api.axis_move(0, 100.00, host_api.get_param('height'))
-    while host_api.axis_is_moving(0):
-        host_api.sleep_ms(10)
-    host_api.set_do(1, True)
-    host_api.log_message('[AMR] Waiting for DI 6...')
-    while host_api.get_di(6) != True:
-        host_api.sleep_ms(10)
-    host_api.axis_move(1, 0.00, 2.00)
-    while host_api.axis_is_moving(1):
-        host_api.sleep_ms(10)
-    host_api.set_do(2, True)
-    host_api.log_message('[AMR] Waiting for DI 7...')
-    while host_api.get_di(7) != True:
-        host_api.sleep_ms(10)
-    host_api.axis_move(0, 0.00, 2.00)
-    while host_api.axis_is_moving(0):
-        host_api.sleep_ms(10)
     host_api.log_message('Program Complete.')
-
 
 if __name__ == '__main__':
     init()

@@ -103,6 +103,9 @@ void PythonEngine::WorkerEntry() {
   py::gil_scoped_acquire acquire;
   Model().SetRunning(true);
 
+  // Ensure we start with a clean state
+  Model().ResetTermination();
+
   // Clear termination flag hack (if possible via Friend or similar? No)
   // Actually, we really need a ResetState method in Model.
   // I'll assume for now RequestTermination handles single shot.

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Py-Sim Control</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+</head>
+
+<body>
+    <div id="app">
+        <!-- Control Bar (Top) -->
+        <nav class="navbar">
+            <div class="brand"><i class="fa-solid fa-robot"></i> Py-Sim <span class="version">v2.1</span></div>
+            <div class="controls">
+                <button id="btn-run" class="btn btn-primary"><i class="fa-solid fa-play"></i> Run</button>
+                <button id="btn-stop" class="btn btn-danger"><i class="fa-solid fa-stop"></i> Stop</button>
+                <button id="btn-theme" class="btn btn-icon"><i class="fa-solid fa-moon"></i></button>
+            </div>
+            <div class="status-indicator">
+                <span id="status-text">Disconnected</span>
+                <span id="status-dot" class="dot offline"></span>
+            </div>
+        </nav>
+
+        <div class="main-layout">
+            <!-- Sidebar (Left): Hardware & Files -->
+            <aside class="sidebar">
+                <div class="tabs">
+                    <button class="tab-btn active" data-tab="hardware">Hardware</button>
+                    <button class="tab-btn" data-tab="files">Files</button>
+                    <button class="tab-btn" data-tab="properties">Properties</button>
+                </div>
+                <div id="tab-hardware" class="tab-content active">
+                    <!-- Dynamic Hardware Content -->
+                    <div id="hardware-metrics" class="metrics-grid">Loading...</div>
+                    <div class="divider"></div>
+                    <div id="hardware-io" class="io-list"></div>
+                </div>
+                <div id="tab-files" class="tab-content">
+                    <div class="file-actions">
+                        <button id="btn-refresh-files"><i class="fa-solid fa-sync"></i></button>
+                        <button id="btn-import-file"><i class="fa-solid fa-file-import"></i></button>
+                    </div>
+                    <ul id="file-list"></ul>
+                </div>
+                <div id="tab-properties" class="tab-content">
+                    <div class="panel-content properties-content">
+                        <!-- Properties Panel Content -->
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Editor (Center): Block Graph -->
+            <main class="editor-area">
+                <div class="editor-toolbar">
+                    <span id="current-file-name">scratch.py</span>
+                </div>
+                <div id="graph-canvas" class="canvas-container">
+                    <!-- Graph Nodes will be rendered here -->
+                </div>
+                <div id="block-library" class="library-panel">
+                    <!-- Draggable Blocks -->
+                </div>
+            </main>
+
+            <!-- Simulator (Right): 3D View & Console -->
+            <aside class="sim-sidebar">
+                <div id="sim-view" class="sim-container">
+                    <!-- Three.js Canvas -->
+                </div>
+                <div class="console-panel">
+                    <div class="console-header">
+                        <span>Console</span>
+                        <button id="btn-clear-console"><i class="fa-solid fa-trash"></i></button>
+                    </div>
+                    <div id="console-output" class="console-body">
+                        <div class="log-line system">System Initialized.</div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Modules -->
+    <script type="module" src="main.js?v=3.2"></script>
+</body>
+
+</html>
