@@ -1,6 +1,8 @@
 #include "amr/AmrController.hpp"
 #include "amr/Hardware.hpp"
 #include <iostream>
+#include "amr/ServiceContext.hpp"
+#include "amr/SafetySystem.hpp"
 
 namespace amr {
 
@@ -11,7 +13,8 @@ AmrController &AmrController::Instance() {
 
 AmrController::AmrController() {
   // Default Hardware
-  hardware_ = std::make_unique<SimHardware>();
+  hardware_ = std::make_shared<SimHardware>();
+  ServiceContext::Instance().Register(hardware_);
 
   // Resize DI state
   last_di_state_.resize(32, false);
@@ -30,82 +33,16 @@ void AmrController::Log(const std::string &msg) {
 void AmrController::Update(float dt) {
   std::lock_guard<std::mutex> lock(mtx_);
 
+  bool paused = false;
+  auto safety = ServiceContext::Instance().Get<SafetySystem>();
+  if (safety && safety->IsPaused()) paused = true;
+
   // Update Hardware
-  if (hardware_ && !is_paused_) {
+  if (hardware_ && !paused) { 
     hardware_->Update(dt);
   }
-
-  // Safety Logic
-  for (auto &pair : input_map_) {
-    int pin = pair.first;
-    const auto &cfg = pair.second;
-
-    if (pin < 0 || pin >= 32)
-      continue;
-
-    bool raw_val = hardware_->GetDI(pin);
-    bool active = cfg.invert ? !raw_val : raw_val;
-
-    bool was_active = last_di_state_[pin];
-    bool rising_edge = active && !was_active;
-    // bool falling_edge = !active && was_active;
-
-    last_di_state_[pin] = active;
-
-    switch (cfg.action) {
-    case InputAction::ESTOP: // Need to fix Enum scope? Types.hpp?
-      // InputConfig struct definition in HPP uses nested InputAction??
-      // AppModel had it inside AppModel.
-      // In AmrController.hpp, InputConfig is struct.
-      // Wait, AppModel definition had `enum class InputAction`.
-      // I need to check where InputAction is defined.
-      // If it was in AppModel, I need to define it in AmrController or
-      // Types.hpp. Assumption: I will fix this. For now using static cast or
-      // int if needed.
-      if (active) {
-        if (!estop_active_) {
-          estop_active_ = true;
-          is_paused_ = true;
-          Log("[Safety] E-STOP TRIGGERED! System Paused.\n");
-        } else if (!is_paused_) {
-          is_paused_ = true;
-          Log("[Safety] E-STOP ACTIVE. Cannot Resume.\n");
-        }
-      } else {
-        if (estop_active_) {
-          estop_active_ = false;
-          Log("[Safety] E-Stop Released. Please Resume manually.\n");
-        }
-      }
-      break;
-
-    case InputAction::PAUSE_TOGGLE:
-      if (rising_edge) {
-        if (estop_active_) {
-          Log("[Safety] Ignored Pause Toggle (E-Stop Active).\n");
-        } else {
-          is_paused_ = !is_paused_;
-          Log(is_paused_ ? "[Safety] Pause Toggled -> PAUSED\n"
-                         : "[Safety] Pause Toggled -> RESUMED\n");
-        }
-      }
-      break;
-
-    case InputAction::HOME_ALL:
-      if (rising_edge) {
-        if (is_paused_ || estop_active_) {
-          Log("[Safety] Ignored Home All (System Paused/Stopped).\n");
-        } else {
-          Log("[Safety] Home All Triggered.\n");
-          for (int i = 0; i < 3; ++i)
-            hardware_->AxisMove(i, 0.0f, 5.0f);
-        }
-      }
-      break;
-    default:
-      break;
-    }
-  }
+  
+  // Legacy Safety Logic Removed (Moved to SafetySystem)
 }
 
 // Safety Configuration

@@ -1,6 +1,8 @@
+#pragma once
 #include "amr/VehicleTypes.hpp"
 #include <string>
 #include <vector>
+#include "amr/ServiceContext.hpp"
 
 namespace amr {
 
@@ -54,7 +56,7 @@ public:
 // Main Hardware Abstraction (Aggregator)
 // ---------------------------------------------------------
 
-class IHardware {
+class IHardware : public IService {
 public:
   virtual ~IHardware() = default;
 

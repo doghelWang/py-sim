@@ -31,6 +31,10 @@ struct Axis {
   bool is_moving = false;
 };
 
+struct Rect {
+  float x, y, w, h;
+};
+
 // Visual Sequencer Types
 enum class BlockType {
   MOVE_AXIS,

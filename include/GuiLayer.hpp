@@ -8,7 +8,7 @@ class IView;
 
 class GuiLayer {
 public:
-  static void SetupStyle();
+  static void SetupStyle(float scale = 1.0f);
   static void Render(void *window_ptr);
 
   // Helper to trigger script generation (shared across views)

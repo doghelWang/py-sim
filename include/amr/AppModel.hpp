@@ -1,7 +1,18 @@
 #pragma once
 
-#include "amr/Hardware.hpp" // IHardware
+#include "amr/Hardware.hpp"
 #include "amr/Types.hpp"
+
+// Service Headers
+#include "amr/ServiceContext.hpp"
+#include "amr/SafetySystem.hpp"
+#include "amr/PhysicsContext.hpp"
+#include "amr/ScriptExecutor.hpp"
+#include "amr/ScriptExecutor.hpp"
+#include "amr/EventBus.hpp"
+#include "amr/DoubleBuffer.hpp"
+#include "amr/DoubleBuffer.hpp"
+
 #include <atomic>
 #include <condition_variable>
 #include <map>
@@ -13,98 +24,87 @@ namespace amr {
 
 class AppModel {
 public:
-  // 定义输入与安全动作枚举
-  // InputAction moved to Types.hpp
-
-  // 单例访问器 (用于主要访问点)
   static AppModel &Instance();
-  // --- 安全与输入框架 (Safety & Input) ---
-  void UpdateSafetyLogic(float dt); // 在主循环调用
-  void MapInput(int pin, InputAction action, bool invert = false,
-                bool edge_trigger = false);
-  void ResetSafetyConfig(); // Clear all input mappings
-  int GetPinForAction(
-      InputAction action) const; // Find pin for action (-1 if none)
 
-  // 禁止拷贝
+  // --- Safety & Input ---
+  void UpdateSafetyLogic(float dt);
+  void MapInput(int pin, InputAction action, bool invert = false, bool edge_trigger = false);
+  void ResetSafetyConfig();
+  int GetPinForAction(InputAction action) const;
+
   AppModel(const AppModel &) = delete;
   AppModel &operator=(const AppModel &) = delete;
 
-  // --- 系统控制 (System Control) ---
-  void SetRunning(bool running); // 设置运行状态
-  bool IsRunning() const;
+  // --- System Control ---
+  void SetRunning(bool running); 
+  bool IsRunning() const; // Maps to ScriptExecutor::IsRunning
 
-  void SetPaused(bool paused); // 设置暂停状态
+  void SetPaused(bool paused);
   bool IsPaused() const;
 
-  void RequestTermination(); // 请求终止脚本
-  void ResetTermination();   // 重置终止标志 (新运行前)
-  bool ShouldTerminate() const;
-  void ClearSafety(); // Clear E-Stop/Pause state
+  void RequestTermination();
+  void ResetTermination();
+  bool ShouldTerminate() const; // Deprecated/Mapped to Executor
+  void ClearSafety();
   void FullReset();
   void LoadScriptAsBlocks(const std::string &path);
-  // Chassis stop + Actuators home at fixed speed
+  void LoadScriptFromContent(const std::string &content);
 
-  void WaitForResume(); // 如果处于暂停状态，阻塞当前线程，直到恢复或终止
+  void WaitForResume(); 
 
-  // --- 运动控制 (Motion Control) ---
-  void AxisMove(int axis, float pos, float vel); // 设置轴目标位置
-  float GetAxisPos(int axis) const;              // 获取当前轴位置
-  bool IsAxisMoving(int axis) const;             // 判断轴是否在运动
+  // --- Motion Control ---
+  void AxisMove(int axis, float pos, float vel);
+  float GetAxisPos(int axis) const;
+  bool IsAxisMoving(int axis) const;
 
-  // 物理更新逻辑 (在主循环中调用)
   void UpdatePhysics(float dt);
 
-  // --- I/O 控制 (I/O Control) ---
-  void SetDO(int port, bool val); // 设置数字输出
+  // --- I/O Control ---
+  void SetDO(int port, bool val);
   bool GetDO(int port) const;
-  bool GetDI(int port) const;     // 获取数字输入
-  void SetDI(int port, bool val); // 设置数字输入 (用于仿真/GUI模拟)
+  bool GetDI(int port) const;
+  void SetDI(int port, bool val);
 
-  // --- 底盘控制 (Chassis Control) ---
+  // --- Chassis ---
   void SetTwist(float vx, float vy, float wz);
   Twist GetTwist() const;
   void SetAgvType(AgvType type);
   AgvType GetAgvType() const;
 
-  // --- Hardware Access (For GUI Visuals) ---
-  IHardware *GetHardware(); // Access raw hardware instance
+  // --- Hardware ---
+  IHardware *GetHardware(); // Legacy
 
-  // --- 寄存器与参数 (Register & Params) ---
-  void SetReg(int id, float val); // 设置内部寄存器 (R0-R31)
+  // --- Registers/Params ---
+  void SetReg(int id, float val);
   float GetReg(int id) const;
-  float GetParam(const std::string &name) const; // 获取全局配置参数
+  float GetParam(const std::string &name) const;
   void SetGlobalParams(const std::vector<GlobalParam> &params);
 
-  // --- 视觉绘制 (Visuals) ---
-  std::vector<DrawCmd> GetDrawQueue();  // 获取绘制队列副本
-  void ClearDrawQueue();                // 清空队列
-  void PushDrawCmd(const DrawCmd &cmd); // 添加绘制指令
-  std::vector<DrawCmd> PopDrawQueue();  // 获取并清空 (原子操作)
+  // --- Visuals ---
+  void PushDrawCmd(const DrawCmd &cmd);
+  std::vector<DrawCmd> SwapDrawQueue();
 
-  // 粒子系统 (Particles)
-  void SpawnParticles(float x, float y, int count,
-                      int color);        // 简化的粒子生成API
-  std::vector<Particle> &GetParticles(); // Mutable access for Physics
+  void SpawnParticles(float x, float y, int count, int color);
+  std::vector<Particle>& GetParticles(); 
 
-  // --- Input State ---
+  // --- Input State (UI) ---
   void SetInputSticky(const std::string &key, bool val);
-  bool GetInputSticky(const std::string &key); // Reads and Clears
+  bool GetInputSticky(const std::string &key);
   void SetMousePos(float x, float y);
   std::pair<float, float> GetMousePos() const;
   void SetMouseDown(int btn, bool val);
   bool IsMouseDown(int btn) const;
 
-  // --- logging ---
+  // --- Logging ---
   void LogMessage(const std::string &msg);
-  std::vector<std::string> &GetLogs();
-  void ClearLogs();
+  std::vector<std::string> SwapLogs();
 
-  // --- Extras (Screenshot, Shake) ---
+  // --- Extras ---
+  void ClearDrawQueue(); // Added
+
+  // --- Extras ---
   void RequestScreenshot(const std::string &filename);
-  bool IsScreenshotRequested(); // Returns true and clears flag? Or checks?
-  // Let's say checks. But we need a way to consume valid filename?
-  // Let's make: std::string ConsumeScreenshotRequest(); // returns empty if
+  bool IsScreenshotRequested();
   std::string GetScreenshotFile() const;
   void ClearScreenshotRequest();
 
@@ -112,21 +112,19 @@ public:
   float GetShakeTimer() const;
   void ReduceShakeTimer(float dt);
 
-  // --- Motion Extras ---
   void SetAxisCurrentPos(int axis, float pos);
 
-  // --- 数据成员访问 (Data Member Access) ---
-  // 用于GUI编辑器直接操作数据
+  // --- Data Access ---
   void AddMechanism(const std::string &name);
-  std::vector<Mechanism> &GetMechanisms(); // 获取机构列表 (由配置编辑器使用)
-  std::vector<VisualBlock> &GetBlocks();   // 获取可视化块列表
+  std::vector<Mechanism> &GetMechanisms();
+  std::vector<VisualBlock> &GetBlocks();
   void SetBlocks(const std::vector<VisualBlock> &blocks);
-  std::vector<GlobalParam> &GetGlobalParams(); // 获取全局参数
+  std::vector<GlobalParam> &GetGlobalParams();
 
-  // --- 脚本辅助 (Script Helpers) ---
+  // --- Script Helpers ---
   void SetNextBlockId(int id);
   int GetNextBlockId() const;
-  int AllocateBlockId(); // 分配下一个块ID并递增
+  int AllocateBlockId();
 
   void SetScriptPath(const std::string &path);
   std::string GetScriptPath() const;
@@ -141,56 +139,52 @@ private:
   AppModel();
   ~AppModel() = default;
 
-  // Hardware Abstraction delegated to AmrController
-
   mutable std::mutex mtx_;
   std::condition_variable cv_;
 
-  // Safety & Input State
-  std::map<int, InputConfig> input_map_;
-  std::vector<bool> last_di_state_;
-  bool estop_active_ = false;
+  // Service Accessor Helpers
+  // std::shared_ptr<SafetySystem> Safety() const; // Implementation detail
 
-  // State
-  std::atomic<bool> is_running_{false};
-  std::atomic<bool> is_paused_{false};
-  std::atomic<bool> should_terminate_{false};
-
-  // Hardware
-  // Axis axes_[3]; // Removed
-  // bool di_[8] = {false}; // Removed
-  // bool do_[8] = {false}; // Removed
-
-  // Data
+  // Legacy/UI Data (Still kept in AppModel as Facade for UI)
   std::vector<Mechanism> mechanisms_;
-  // std::vector<GlobalParam> params_; // Delegated to AmrController
   std::vector<VisualBlock> blocks_;
+  
+  // Double Buffers
+  DoubleBuffer<DrawCmd> draw_queue_; 
+  DoubleBuffer<std::string> console_logs_;
+  
+  // Script Metadata (Cached for UI)
+  // Actually ScriptExecutor has locals/current line. 
+  // But AppModel needs to expose them. 
+  // We can fetch from Service. 
+  // Keep source_lines here as it's static data loaded from file? 
+  // ScriptExecutor doesn't necessarily store source lines (it runs file).
+  // AppModel acts as "IDE State" too.
+  std::vector<std::string> source_lines_;
+  std::string script_path_ = "../scripts/snake_game.py";
 
-  // Visuals
-  std::vector<DrawCmd> draw_queue_;
-  std::vector<Particle> particles_;
+  int next_block_id_ = 0;
 
-  std::vector<std::string> console_logs_;
-
-  // Extras
+  // Chassis State
+  Twist target_twist_ = {0, 0, 0};
+  AgvType agv_type_ = AgvType::BASIC;
+  float accumulator_ = 0.0f;
+  
+  // IO
   std::atomic<bool> screenshot_req_{false};
   std::string screenshot_file_;
-  float shake_timer_ = 0.0f;
-
-  // Input
+  
+  // Input UI
   std::map<std::string, bool> input_sticky_;
   float mouse_x_ = 0, mouse_y_ = 0;
   bool mouse_down_[3] = {false};
 
-  // Script Data
-  std::string script_path_ = "../scripts/snake_game.py";
-  std::vector<std::string> source_lines_;
-  std::map<std::string, std::string> locals_;
-  int current_line_ = 0;
-  int next_block_id_ = 0;
-
-  Twist target_twist_ = {0, 0, 0};
-  AgvType agv_type_ = AgvType::BASIC;
+  // Interpolation State
+  std::map<int, float> axis_targets_;
+  std::map<int, float> axis_velocities_;
+  // We use PhysicsContext as 'Current' source of truth for X/Y/Theta
+  // For other axes (Lift), we need storage if SimHardware doesn't persist properly
+  // or just use SimHardware->GetAxisData for current.
 
   void LoadScriptAsBlocksInternal(const std::string &path);
   void SetAgvTypeInternal(AgvType type);

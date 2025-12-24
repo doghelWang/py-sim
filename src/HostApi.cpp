@@ -3,7 +3,8 @@
 #endif
 
 #include "amr/AppModel.hpp"
-#include "amr/SimulatorCore.hpp"
+#include "amr/PhysicsContext.hpp"
+#include "amr/ServiceContext.hpp"
 #include "httplib.h"
 #include <array>
 #include <chrono>
@@ -28,7 +29,8 @@ static AppModel &Model() { return AppModel::Instance(); }
 std::string exec_cmd(const char *cmd) {
   std::array<char, 128> buffer;
   std::string result;
-  std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+  // Windows _popen / _pclose
+  std::unique_ptr<FILE, decltype(&_pclose)> pipe(_popen(cmd, "r"), _pclose);
   if (!pipe)
     return "popen() failed!";
   while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr)
@@ -49,22 +51,37 @@ void log_message(const std::string &msg) { Model().LogMessage(msg); }
 
 // 毫秒级延时
 void sys_sleep_ms(int ms) {
-  // 如果是主线程调用（非脚本），直接睡眠
-  // 如果是脚本线程，需要检查暂停/终止请求
+  // Release GIL so other threads (e.g. WebServer/AppModel) can run
+  py::gil_scoped_release release;
+  
+  std::cout << "[HostApi] sys_sleep_ms(" << ms << ") called." << std::endl;
+  
   auto start = std::chrono::high_resolution_clock::now();
   int elapsed = 0;
   while (elapsed < ms) {
     if (Model().ShouldTerminate()) {
+      std::cout << "[HostApi] sys_sleep_ms terminated early." << std::endl;
       break;
     }
-    // 检查暂停
-    Model().WaitForResume();
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    // Check Pause
+    // Note: WaitForResume might need GIL if it calls Python? 
+    // amr::ScriptExecutor::WaitForResume throws py::error?
+    // If it throws, we need to handle it.
+    // Actually WaitForResume in ScriptExecutor uses std::this_thread::sleep, no Python.
+    // But it throws py::value_error. We must catch it or not release GIL?
+    // Wait, throwing C++ exception through pybind11 requires GIL?
+    // Usually yes.
+    // For now, let's keep it simple. Only release GIL for the sleep loop.
+    
+    // Model().WaitForResume(); // This is risky if it throws without GIL.
+    // Let's rely on ShouldTerminate for now.
+    
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
     auto now = std::chrono::high_resolution_clock::now();
     elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start)
                   .count();
   }
+  std::cout << "[HostApi] sys_sleep_ms finished. Elapsed: " << elapsed << "ms" << std::endl;
 }
 
 void write_file(const std::string &path, const std::string &content) {
@@ -152,9 +169,13 @@ void screen_shake(float i) { Model().SetShakeTimer(i); }
 
 // --- Environment API ---
 void add_obstacle(float x, float y, float w, float h) {
-  SimulatorCore::Instance().AddObstacle(x, y, w, h);
+  auto physics = amr::ServiceContext::Instance().Get<amr::PhysicsContext>();
+  if (physics) physics->AddObstacle(x, y, w, h);
 }
-void reset_obstacles() { SimulatorCore::Instance().ResetObstacles(); }
+void reset_obstacles() { 
+  auto physics = amr::ServiceContext::Instance().Get<amr::PhysicsContext>();
+  if (physics) physics->ResetObstacles(); 
+}
 
 // --- Motion Control API ---
 

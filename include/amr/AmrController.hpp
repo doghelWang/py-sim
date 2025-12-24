@@ -65,7 +65,7 @@ private:
   mutable std::mutex mtx_;
   std::function<void(const std::string &)> log_cb_;
 
-  std::unique_ptr<class IHardware> hardware_;
+  std::shared_ptr<class IHardware> hardware_;
 
   // Safety
   std::map<int, InputConfig> input_map_;

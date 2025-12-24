@@ -8,17 +8,26 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <deque>
 
-// Global view instances (Keep it simple for now as it's a static layer)
+// Global view instances
 static std::vector<std::unique_ptr<gui::IView>> g_views;
+
+// Local GUI Log History
+static std::deque<std::string> g_gui_logs;
 
 static amr::AppModel &Model() { return amr::AppModel::Instance(); }
 
-void GuiLayer::SetupStyle() {
+void GuiLayer::SetupStyle(float scale) {
   ImGuiStyle &style = ImGui::GetStyle();
-  style.WindowRounding = 2.0f;
-  style.FrameRounding = 3.0f;
-  style.ScrollbarRounding = 10.0f;
+  style.WindowRounding = 2.0f * scale;
+  style.FrameRounding = 3.0f * scale;
+  style.ScrollbarRounding = 10.0f * scale;
+  style.ItemSpacing = ImVec2(8 * scale, 4 * scale);
+  style.FramePadding = ImVec2(4 * scale, 3 * scale);
+  style.WindowPadding = ImVec2(8 * scale, 8 * scale);
+  style.ScrollbarSize = 14.0f * scale;
+
   ImVec4 *colors = style.Colors;
   colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
   colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.12f, 0.15f, 1.00f);
@@ -30,14 +39,22 @@ void GuiLayer::SetupStyle() {
 }
 
 void GuiLayer::Render(void *window_ptr) {
+  // printf("[DBG] GUI Render Start\n");
+  // Sync Logs
+  auto new_logs = Model().SwapLogs();
+  for(const auto& l : new_logs) {
+      if(g_gui_logs.size() > 500) g_gui_logs.pop_front();
+      g_gui_logs.push_back(l);
+  }
+
   if (g_views.empty()) {
     g_views.push_back(std::make_unique<gui::SimulatorView>());
     g_views.push_back(std::make_unique<gui::HardwareView>());
     g_views.push_back(std::make_unique<gui::EditorView>());
   }
 
-  static float left_width = 300.0f;
-  static float right_width = 400.0f;
+  static float left_width = 250.0f;
+  static float right_width = 580.0f;
   static float bottom_height = 150.0f;
   static bool show_debug = true;
 
@@ -55,12 +72,14 @@ void GuiLayer::Render(void *window_ptr) {
   ImVec2 full_size = ImGui::GetContentRegionAvail();
 
   // --- Left Panel: Hardware ---
+  // printf("[DBG] Left Panel Start\n");
   ImGui::BeginChild("LeftPanel",
                     ImVec2(left_width, show_debug ? full_size.y - bottom_height
                                                   : full_size.y),
                     true);
   g_views[1]->Render();
   ImGui::EndChild();
+  // printf("[DBG] Left Panel End\n");
 
   ImGui::SameLine();
 
@@ -72,6 +91,7 @@ void GuiLayer::Render(void *window_ptr) {
   ImGui::SameLine();
 
   // --- Center Panel: Editor ---
+  // printf("[DBG] Center Panel Start\n");
   float center_width = full_size.x - left_width - right_width - 8;
   ImGui::BeginChild("CenterPanel",
                     ImVec2(center_width, show_debug
@@ -80,6 +100,7 @@ void GuiLayer::Render(void *window_ptr) {
                     true);
   g_views[2]->Render();
   ImGui::EndChild();
+  // printf("[DBG] Center Panel End\n");
 
   ImGui::SameLine();
 
@@ -91,11 +112,13 @@ void GuiLayer::Render(void *window_ptr) {
   ImGui::SameLine();
 
   // --- Right Panel: Simulator ---
+  // printf("[DBG] Right Panel Start\n");
   ImGui::BeginChild(
       "RightPanel",
       ImVec2(0, show_debug ? full_size.y - bottom_height : full_size.y), true);
   g_views[0]->Render();
   ImGui::EndChild();
+  // printf("[DBG] Right Panel End\n");
 
   // --- Bottom Panel: Debug Console ---
   if (show_debug) {
@@ -107,12 +130,11 @@ void GuiLayer::Render(void *window_ptr) {
     ImGui::Text("Debug Console");
     ImGui::Separator();
 
-    auto &logs = Model().GetLogs();
-    for (const auto &log : logs) {
+    for (const auto &log : g_gui_logs) {
       ImGui::TextUnformatted(log.c_str());
+      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+          ImGui::SetScrollHereY(1.0f);
     }
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-      ImGui::SetScrollHereY(1.0f);
     ImGui::EndChild();
   } else {
     ImGui::SetCursorPos(ImVec2(0, full_size.y - 25));
@@ -134,9 +156,9 @@ void GuiLayer::Render(void *window_ptr) {
   Model().SetInputSticky("SPACE", io.KeysDown[ImGuiKey_Space]);
 
   ImGui::PopStyleVar(3);
+  // printf("GUI Render End\n");
 }
 
-// Logic for script generation (kept static here for accessibility by views)
 void GuiLayer::RequestScriptGeneration() {
   auto blocks = Model().GetBlocks();
   const auto &mechanisms = Model().GetMechanisms();
@@ -274,8 +296,8 @@ void GuiLayer::RequestScriptGeneration() {
   code += "    host_api.log_message('Program Complete.')\n\nif __name__ == "
           "'__main__':\n    init()\n    main()\n";
 
-  std::ofstream out("../scripts/visual_prog.py");
+  std::ofstream out("scripts/visual_prog.py");
   out << code;
   out.close();
-  Model().SetScriptPath("../scripts/visual_prog.py");
+  Model().SetScriptPath("scripts/visual_prog.py");
 }

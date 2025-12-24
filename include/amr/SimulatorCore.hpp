@@ -7,9 +7,6 @@
 
 namespace amr {
 
-struct Rect {
-  float x, y, w, h;
-};
 
 class SimulatorCore {
 public:

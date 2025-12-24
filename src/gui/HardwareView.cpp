@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "gui/HardwareView.hpp"
 #include "amr/AmrController.hpp"
 #include "amr/AppModel.hpp"

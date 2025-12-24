@@ -13,8 +13,6 @@ public:
   const char *GetName() const override { return "Editor"; }
 
 private:
-  void DrawPalette();
-  void DrawWorkspace();
   void DrawCodeViewer();
   bool RenderBlock(amr::VisualBlock &b, int index);
 
