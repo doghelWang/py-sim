@@ -3,6 +3,7 @@
 #endif
 
 #include "amr/AppModel.hpp"
+#include "amr/SimulatorCore.hpp"
 #include "httplib.h"
 #include <array>
 #include <chrono>
@@ -133,7 +134,11 @@ void draw_text(float x, float y, const std::string &text, int r, int g, int b) {
   Model().PushDrawCmd({amr::CmdType::TEXT, x, y, 0, 0, 0, col, text});
 }
 void clear_screen() { Model().ClearDrawQueue(); }
-bool is_key_down(const std::string &key) { return Model().GetInputSticky(key); }
+bool is_key_down(std::string key) {
+  // Normalize to uppercase
+  std::transform(key.begin(), key.end(), key.begin(), ::toupper);
+  return Model().GetInputSticky(key);
+}
 std::tuple<float, float> get_mouse_pos() {
   auto p = Model().GetMousePos();
   return std::make_tuple(p.first, p.second);
@@ -144,6 +149,12 @@ void spawn_particles(float x, float y, int count, int r, int g, int b) {
   Model().SpawnParticles(x, y, count, col);
 }
 void screen_shake(float i) { Model().SetShakeTimer(i); }
+
+// --- Environment API ---
+void add_obstacle(float x, float y, float w, float h) {
+  SimulatorCore::Instance().AddObstacle(x, y, w, h);
+}
+void reset_obstacles() { SimulatorCore::Instance().ResetObstacles(); }
 
 // --- Motion Control API ---
 
@@ -180,6 +191,11 @@ void set_paused(bool paused) {
   Model().LogMessage(paused ? "[DEBUG] set_paused(True)\n"
                             : "[DEBUG] set_paused(False)\n");
 }
+
+void configure_input(int pin, int action, bool invert, bool edge) {
+  Model().MapInput(pin, (InputAction)action, invert, edge);
+}
+void set_twist(float vx, float vy, float wz) { Model().SetTwist(vx, vy, wz); }
 
 // Module
 PYBIND11_EMBEDDED_MODULE(host_api, m) {
@@ -222,25 +238,25 @@ PYBIND11_EMBEDDED_MODULE(host_api, m) {
 
   // AMR Config
   m.def("get_param", &get_param, "Get Global Param value by Name");
+  m.def("set_twist", &set_twist, "Set AGV Chassis velocity (omni)");
 
   // System Control
   m.def("set_paused", &set_paused, "Pause/Resume System");
+  m.def(
+      "should_terminate", []() { return Model().ShouldTerminate(); },
+      "Check if script should stop");
 
   // Safety Config
-  m.def(
-      "configure_input",
-      [](int pin, int action, bool invert, bool edge) {
-        // Map int to InputAction
-        auto act = static_cast<amr::AppModel::InputAction>(action);
-        Model().MapInput(pin, act, invert, edge);
-        Model().LogMessage("[Sys] Input Mapped: Pin " + std::to_string(pin) +
-                           " -> Action " + std::to_string(action));
-      },
-      "Configure DI Pin: pin, action(0=None,1=EStop,2=PauseTog,3=Home), "
-      "invert, edge");
+  m.def("configure_input", &configure_input,
+        "Configure DI Pin: pin, action(0=None,1=EStop,2=PauseTog,3=Home), "
+        "invert, edge");
 
-  // Hardcoded Logic for Demo Safety Monitor
-  m.def("demo_safety_check", []() {
+  // Environment
+  m.def("add_obstacle", &add_obstacle, "Add a rectangular obstacle to sim");
+  m.def("reset_obstacles", &reset_obstacles, "Clear all obstacles from sim");
+
+  // Hardcoded Logic for Demo
+  m.def("check_safety", []() {
     // Legacy: This logic has been moved to AppModel::UpdateSafetyLogic()
   });
 

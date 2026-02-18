@@ -14,18 +14,7 @@ namespace amr {
 class AppModel {
 public:
   // 定义输入与安全动作枚举
-  enum class InputAction {
-    NONE = 0,
-    ESTOP,        // 急停 (Hold to Stop): High=Stop, Low=Resume (if recovered)
-    PAUSE_TOGGLE, // 暂停/恢复切换 (Edge Trigger)
-    HOME_ALL,     // 全部回零 (Edge Trigger)
-  };
-
-  struct InputConfig {
-    InputAction action = InputAction::NONE;
-    bool invert = false;       // True: Low Active, False: High Active
-    bool edge_trigger = false; // True: Action on Edge, False: Action on Level
-  };
+  // InputAction moved to Types.hpp
 
   // 单例访问器 (用于主要访问点)
   static AppModel &Instance();
@@ -51,6 +40,10 @@ public:
   void RequestTermination(); // 请求终止脚本
   void ResetTermination();   // 重置终止标志 (新运行前)
   bool ShouldTerminate() const;
+  void ClearSafety(); // Clear E-Stop/Pause state
+  void FullReset();
+  void LoadScriptAsBlocks(const std::string &path);
+  // Chassis stop + Actuators home at fixed speed
 
   void WaitForResume(); // 如果处于暂停状态，阻塞当前线程，直到恢复或终止
 
@@ -67,6 +60,15 @@ public:
   bool GetDO(int port) const;
   bool GetDI(int port) const;     // 获取数字输入
   void SetDI(int port, bool val); // 设置数字输入 (用于仿真/GUI模拟)
+
+  // --- 底盘控制 (Chassis Control) ---
+  void SetTwist(float vx, float vy, float wz);
+  Twist GetTwist() const;
+  void SetAgvType(AgvType type);
+  AgvType GetAgvType() const;
+
+  // --- Hardware Access (For GUI Visuals) ---
+  IHardware *GetHardware(); // Access raw hardware instance
 
   // --- 寄存器与参数 (Register & Params) ---
   void SetReg(int id, float val); // 设置内部寄存器 (R0-R31)
@@ -95,14 +97,14 @@ public:
 
   // --- logging ---
   void LogMessage(const std::string &msg);
-  std::string GetLog() const;
+  std::vector<std::string> &GetLogs();
+  void ClearLogs();
 
   // --- Extras (Screenshot, Shake) ---
   void RequestScreenshot(const std::string &filename);
   bool IsScreenshotRequested(); // Returns true and clears flag? Or checks?
   // Let's say checks. But we need a way to consume valid filename?
   // Let's make: std::string ConsumeScreenshotRequest(); // returns empty if
-  // none
   std::string GetScreenshotFile() const;
   void ClearScreenshotRequest();
 
@@ -115,8 +117,10 @@ public:
 
   // --- 数据成员访问 (Data Member Access) ---
   // 用于GUI编辑器直接操作数据
+  void AddMechanism(const std::string &name);
   std::vector<Mechanism> &GetMechanisms(); // 获取机构列表 (由配置编辑器使用)
   std::vector<VisualBlock> &GetBlocks();   // 获取可视化块列表
+  void SetBlocks(const std::vector<VisualBlock> &blocks);
   std::vector<GlobalParam> &GetGlobalParams(); // 获取全局参数
 
   // --- 脚本辅助 (Script Helpers) ---
@@ -137,8 +141,7 @@ private:
   AppModel();
   ~AppModel() = default;
 
-  // Hardware Abstraction
-  std::unique_ptr<IHardware> hardware_;
+  // Hardware Abstraction delegated to AmrController
 
   mutable std::mutex mtx_;
   std::condition_variable cv_;
@@ -157,18 +160,17 @@ private:
   // Axis axes_[3]; // Removed
   // bool di_[8] = {false}; // Removed
   // bool do_[8] = {false}; // Removed
-  float registers_[32] = {0};
 
   // Data
   std::vector<Mechanism> mechanisms_;
-  std::vector<GlobalParam> params_;
+  // std::vector<GlobalParam> params_; // Delegated to AmrController
   std::vector<VisualBlock> blocks_;
 
   // Visuals
   std::vector<DrawCmd> draw_queue_;
   std::vector<Particle> particles_;
 
-  std::string console_log_;
+  std::vector<std::string> console_logs_;
 
   // Extras
   std::atomic<bool> screenshot_req_{false};
@@ -186,6 +188,13 @@ private:
   std::map<std::string, std::string> locals_;
   int current_line_ = 0;
   int next_block_id_ = 0;
+
+  Twist target_twist_ = {0, 0, 0};
+  AgvType agv_type_ = AgvType::BASIC;
+
+  void LoadScriptAsBlocksInternal(const std::string &path);
+  void SetAgvTypeInternal(AgvType type);
+  void LogMessageInternal(const std::string &msg);
 };
 
 } // namespace amr

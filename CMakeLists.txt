@@ -70,6 +70,8 @@ set(IMGUI_DIR ${imgui_SOURCE_DIR})
 add_library(amr_core STATIC
     src/amr/AppModel.cpp
     src/amr/Hardware.cpp
+    src/amr/AmrController.cpp
+    src/amr/SimulatorCore.cpp
     # src/GuiLayer.cpp # Dependencies on legacy AppState prevent this yet
     # src/HostApi.cpp 
 )
@@ -78,6 +80,9 @@ target_include_directories(amr_core PUBLIC include)
 add_executable(demo_gui 
     src/main.cpp 
     src/GuiLayer.cpp
+    src/gui/SimulatorView.cpp
+    src/gui/HardwareView.cpp
+    src/gui/EditorView.cpp
     src/HostApi.cpp 
     src/PythonEngine.cpp
     ${IMGUI_DIR}/imgui.cpp

@@ -67,11 +67,18 @@ int main(int, char **) {
   auto &app = amr::AppModel::Instance();
 
   // 4. Main Loop
+  double last_time = glfwGetTime();
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
 
-    // Safety Update (Independent of GUI/Python)
-    app.UpdateSafetyLogic(0.016f); // Approx 60Hz dt
+    double current_time = glfwGetTime();
+    float dt = (float)(current_time - last_time);
+    last_time = current_time;
+    if (dt > 0.1f)
+      dt = 0.1f; // Cap
+
+    // Safety Update (Sync with real time)
+    app.UpdateSafetyLogic(dt);
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
